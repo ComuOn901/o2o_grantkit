@@ -95,14 +95,15 @@ may point at.
 
 ### overhead_included
 
-`overhead_included: true` is only meaningful with `amount_usd` /
-`contract_usd`: it records that those dollars **already contain org
-overheads**, so the selection-level overhead must not re-apply to
-them. Upstream org models often emit fee-inclusive totals; re-applying
-the fee on top produces a phantom overhead-on-overhead line (a real
-$99,750 error on one live view motivated this flag). With the flag
-set, the fee is applied exactly once, by construction. Labor and units
-always remain overhead-bearing — they are raw costs.
+For ordinary items, `overhead_included: true` is meaningful with
+`amount_usd` / `contract_usd`: it records that those dollars **already
+contain org overheads**, so the selection-level overhead must not re-apply
+to them. Upstream org models often emit fee-inclusive totals; re-applying
+the fee on top produces a phantom overhead-on-overhead line (a real $99,750
+error on one live view motivated this flag). Ordinary labor and units remain
+overhead-bearing because they are raw costs. Roster-based org bases are the
+documented exception: the flag covers roster labor and non-personnel cost as
+one overhead-inclusive block.
 
 ## Estimate objects
 
