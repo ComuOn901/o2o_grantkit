@@ -262,16 +262,23 @@ Cayuse, Kuali) — inside closed systems.**
   page, and only federal NIH-family forms are covered.
 - **Grants.gov Workspace + forms repository** — HHS/OMB. "Check for Errors"
   and Check Application run field- and cross-form validation (e.g., budget
-  totals must reconcile between SF-424A detail and summary) before submission;
-  the SF-424 form families are published as versioned XML schemas (XSDs) for
-  system-to-system use.
+  totals must reconcile between SF-424A detail and summary) before
+  submission, documented in Grants.gov help; the grantor and applicant
+  system-to-system pages publish versioned XML schemas for
+  opportunity/application handling (e.g., GrantsCommonTypes-V1.0,
+  GrantsCommonElements-V1.0, ApplicantCommonElements-V1.0,
+  GrantsFundingSynopsis-V2.0, marked Schema Version V2.0-compatible).
+  Individual SF-424-family form XSDs were NOT confirmed on the public pages
+  (2026-08-14 live check: the forms-repository page serves sample PDFs that
+  "cannot be submitted").
   <https://www.grants.gov/applicants/encountering-error-messages.html>,
   <https://grants.gov/forms/forms-repository/sf-424-family>,
   <https://www.grants.gov/system-to-system/grantor-system-to-system/schemas>.
   Verdict: partial prior art for C5's "form rules as code, versioned":
-  federal form *structure* is literally versioned schema; business rules and
-  caps are only partly encoded, the validator is a hosted black box, and
-  nothing lands in the applicant's repo.
+  federal system-to-system *interchange* is literally versioned schema
+  (per-form XSD publication unverified); business rules and caps are only
+  partly encoded, the validator is a hosted black box, and nothing lands in
+  the applicant's repo.
 - **Cayuse 424 / Cayuse SP** — Cayuse (research administration). System-to-
   system proposal builder that maintains a running errors/warnings/info list
   replicating Grants.gov and agency validations; budgets auto-calculated from
@@ -284,14 +291,21 @@ Cayuse, Kuali) — inside closed systems.**
   What's missing for C1 proper: the inputs are cost categories and rates, not
   a work-item menu; the computation is interactive and stateful, not a pure
   function; nothing is reproducible outside the vendor system.
-- **Kuali Research budget engine** — Kuali (open-core research admin).
+- **Kuali Research budget engine** — Kuali (commercial SaaS). Lineage: MIT
+  Coeus → Kuali Coeus (2006, community source under the Educational Community
+  License, Kuali Foundation) → 2014 for-profit spin-off (KualiCo, later
+  Kuali) → Kuali Research. The open-source ancestor
+  (<https://github.com/kuali/kc>, AGPL-3.0) is real open source and not
+  archived, but frozen: last commit 2017-01-06, last push 2018-05-16
+  (verified 2026-08-14); the current commercial engine is closed.
   Institutional rate tables (F&A, fringe, inflation, vacation) drive automatic
   budget calculation "on a precise daily calculation," including cost share
   and unrecovered F&A.
   <https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations>.
   Verdict: same as Cayuse for C1; also the sharpest C3 contrast in the wild —
   fringe is *defined* as salary × configured rate; no one computes it from
-  statute.
+  statute. Precision note: not simply "closed" — an open ancestor exists,
+  frozen since 2017.
 - **APD / FFP practice (state HHS systems)** — 45 CFR 95.610 requires states
   to submit Advance Planning Documents with a proposed budget and "an estimate
   of the prospective cost allocation/distribution to the various State and
@@ -497,8 +511,9 @@ referee will raise them.
 (Kuali, Cayuse) compute budgets from structured inputs; ProPricer/BOEMax
 compile cost volumes from cost element libraries; construction estimating
 compiles bids from priced catalogs; every serious nonprofit budget is already
-formula-driven in a spreadsheet. FOR: all of the above are closed,
-interactive, and category-based; none is a pure function over a versioned
+formula-driven in a spreadsheet. FOR: all of the above are closed or, where
+once open, frozen since 2017 (Kuali's AGPL ancestor), and all are
+interactive and category-based; none is a pure function over a versioned
 work-item menu, none reruns in CI, none ties items to completion evidence.
 **Verdict: PARTIAL PRIOR ART** — claim survives only in its precise form
 ("pure function, work-item menu, reproducible in CI"); the loose form
@@ -538,8 +553,9 @@ libraries, PDC, braiding) the paper should cite.
 
 **C5 — Versioned funder packs + CI validation + status artifact.** AGAINST:
 NIH ASSIST/eRA validate against encoded business rules with itemized
-errors/warnings; Grants.gov publishes versioned XSD form families and runs
-cross-form checks; Cayuse replicates agency validations with severity levels;
+errors/warnings; Grants.gov publishes versioned system-to-system XML schemas
+and documents cross-form checks (per-form XSD publication unverified);
+Cayuse replicates agency validations with severity levels;
 Submittable/Fluxx gate eligibility in-portal; OSCAL/trestle already do
 versioned rule packs + CI + generated compliance documents in another domain;
 Vale already does rule-pack linting of prose in CI. FOR: no applicant-side,
@@ -563,7 +579,7 @@ already flags adoption as untested beyond one live diligence.
 
 | Claim | Verdict | Nearest neighbor | Citation |
 |---|---|---|---|
-| C1 budget as compiled artifact | PARTIAL PRIOR ART | Kuali Research budget engine (rate-table autocalc); Deltek ProPricer (structured cost buildup) | <https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations>; <https://www.propricer.com/> |
+| C1 budget as compiled artifact | PARTIAL PRIOR ART | Kuali Research budget engine (rate-table autocalc; open-source ancestor frozen since 2017); Deltek ProPricer (structured cost buildup) | <https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations>; <https://www.propricer.com/> |
 | C2 pre-award double-billing gate | NOVEL (machine check; invariant is old policy) | NIH commitment-overlap rule, staff-resolved at award; Huron ECC post-award certification | <https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm>; <https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview> |
 | C3 rule-derived personnel rates | PARTIAL PRIOR ART | Payroll-tax calculators/engines (rules-based loading, no provenance, post-hire); pooled fringe multipliers (incumbent) | <https://jupid.com/payroll-tax-calculator>; <https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S> |
 | C4 funder-as-view | NOVEL (mechanism; ancestors are copy-forward reuse) | BOEMax process/estimate library reused across proposals; Philanthropy Data Commons (one dataset, many funders) | <https://www.projstream.com/basis-of-estimate-proposal-software-boemax>; <https://philanthropydatacommons.org/> |
@@ -573,3 +589,13 @@ already flags adoption as untested beyond one live diligence.
 Exact-phrase check: no prior tool or paper styled "grants as code" or "CI for
 grants" was found (2026-08 sweep); nearest live practice is crypto grant
 programs run as markdown PRs (<https://github.com/w3f/Grants-Program>).
+
+Citation/verification note (2026-08-14 live checks): Kuali lineage and repo
+status confirmed against <https://github.com/kuali/kc> (AGPL-3.0; not
+archived; last commit 2017-01-06, last push 2018-05-16) — hence the C1
+"closed or, where once open, frozen since 2017" wording. Grants.gov schema
+claims narrowed to what the system-to-system pages actually publish
+(GrantsCommonTypes/GrantsCommonElements/ApplicantCommonElements/
+GrantsFundingSynopsis, marked Schema Version V2.0-compatible); per-form
+SF-424 XSDs were not found on the public pages, and cross-form budget
+reconciliation rests on Grants.gov help ("Check for Errors").
