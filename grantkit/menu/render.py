@@ -89,6 +89,7 @@ def print_budget(
     portfolio: Portfolio,
     selection: Selection,
     cost: SelectionCost,
+    periods: bool = False,
 ) -> None:
     """Print the compiled budget as rich tables (the default output)."""
     currency = cost.currency
@@ -163,6 +164,10 @@ def print_budget(
                 ".",
             )
         )
+    if periods:
+        _print_period_tables(console, portfolio, cost)
+    if cost.revenue["by_stream"]:
+        _print_revenue(console, cost)
 
 
 def _personnel_rows(
@@ -200,6 +205,233 @@ def _category_rows(cost: SelectionCost) -> list[tuple[str, float]]:
     return [(label, amount) for label, amount in rows if amount]
 
 
+def _print_period_tables(
+    console: Console, portfolio: Portfolio, cost: SelectionCost
+) -> None:
+    currency = cost.currency
+    phasing = Table(title="Phasing", show_header=True, header_style="bold")
+    phasing.add_column("Period")
+    phasing.add_column("Months", justify="right")
+    for key, label in (
+        ("labor", "Labor"),
+        ("units", "Units"),
+        ("contract", "Contract"),
+        ("flat", "Flat"),
+        ("recurring", "Recurring"),
+        ("org_base", "Org base"),
+        ("overhead", "Overhead"),
+        ("total", "Total"),
+    ):
+        phasing.add_column(label, justify="right")
+    for period in cost.periods:
+        phasing.add_row(
+            Text(str(period["label"])),
+            Text(f"{period['months']:g}"),
+            *(
+                Text(format_money(period["cost"][key], currency))
+                for key in (
+                    "labor",
+                    "units",
+                    "contract",
+                    "flat",
+                    "recurring",
+                    "org_base",
+                    "overhead",
+                    "total",
+                )
+            ),
+        )
+    console.print(phasing)
+
+    rows = _staffing_rows(portfolio, cost)
+    if not rows:
+        return
+    staffing = Table(title="Staffing", show_header=True, header_style="bold")
+    staffing.add_column("Period")
+    staffing.add_column("Role")
+    staffing.add_column("Incremental FTE", justify="right")
+    staffing.add_column("Base FTE", justify="right")
+    staffing.add_column("Total FTE", justify="right")
+    staffing.add_column("Capacity", justify="right")
+    for row in rows:
+        staffing.add_row(*(Text(cell) for cell in row))
+    console.print(staffing)
+
+
+def _staffing_rows(
+    portfolio: Portfolio, cost: SelectionCost
+) -> list[tuple[str, str, str, str, str, str]]:
+    rates = portfolio.rates.roles_by_name
+    rows: list[tuple[str, str, str, str, str, str]] = []
+    for period in cost.periods:
+        incremental = period["fte_by_role"]
+        base = period["base_fte_by_role"]
+        for role in sorted(set(incremental) | set(base)):
+            incremental_fte = float(incremental.get(role, 0.0))
+            base_fte = float(base.get(role, 0.0))
+            rate = rates.get(role)
+            capacity = rate.capacity_fte if rate is not None else None
+            rows.append(
+                (
+                    str(period["label"]),
+                    role,
+                    f"{incremental_fte:g}",
+                    f"{base_fte:g}",
+                    f"{incremental_fte + base_fte:g}",
+                    f"{capacity:g}" if capacity is not None else "—",
+                )
+            )
+    return rows
+
+
+def _print_revenue(console: Console, cost: SelectionCost) -> None:
+    currency = cost.currency
+    revenue = Table(title="Revenue", show_header=True, header_style="bold")
+    revenue.add_column("Stream")
+    revenue.add_column("Item")
+    revenue.add_column("Enabled", justify="right")
+    revenue.add_column("Attributed", justify="right")
+    for stream in cost.revenue["by_stream"]:
+        revenue.add_row(
+            Text(str(stream["stream"])),
+            Text(str(stream["item_id"])),
+            Text(format_money(stream["enabled_usd"], currency)),
+            Text(format_money(stream["attributed_usd"], currency)),
+        )
+    revenue.add_row(
+        Text("Total", style="bold"),
+        Text(""),
+        Text(
+            format_money(cost.revenue["enabled_total"], currency),
+            style="bold",
+        ),
+        Text(
+            format_money(cost.revenue["attributed_total"], currency),
+            style="bold",
+        ),
+    )
+    console.print(revenue)
+    console.print(
+        Text(
+            "Net of attributed revenue — attribution is a convention; "
+            "see docs: " + format_money(cost.net_of_attributed_usd, currency),
+            style="dim",
+        )
+    )
+
+
+def _period_markdown(portfolio: Portfolio, cost: SelectionCost) -> list[str]:
+    currency = cost.currency
+    lines = [
+        "## Phasing",
+        "",
+        "| Period | Months | Labor | Units | Contract | Flat | Recurring "
+        "| Org base | Overhead | Total |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for period in cost.periods:
+        values = [
+            str(period["label"]),
+            f"{period['months']:g}",
+            *(
+                format_money(period["cost"][key], currency)
+                for key in (
+                    "labor",
+                    "units",
+                    "contract",
+                    "flat",
+                    "recurring",
+                    "org_base",
+                    "overhead",
+                    "total",
+                )
+            ),
+        ]
+        lines.append(
+            "| " + " | ".join(_markdown_cell(value) for value in values) + " |"
+        )
+    lines += ["", "## Staffing", ""]
+    staffing = _staffing_rows(portfolio, cost)
+    if not staffing:
+        lines += ["No personnel are scheduled in these periods.", ""]
+        return lines
+    lines += [
+        "| Period | Role | Incremental FTE | Base FTE | Total FTE | Capacity |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    for row in staffing:
+        lines.append(
+            "| " + " | ".join(_markdown_cell(value) for value in row) + " |"
+        )
+    lines.append("")
+    return lines
+
+
+def _revenue_markdown(cost: SelectionCost) -> list[str]:
+    currency = cost.currency
+    lines = [
+        "## Revenue",
+        "",
+        "Revenue streams are org-level projections, not a profit-and-loss "
+        "statement. Attributed revenue scales enabled revenue by the "
+        "selection fraction.",
+        "",
+        "| Stream | Item | Family | Enabled | Attributed |",
+        "|---|---|---|---:|---:|",
+    ]
+    for stream in cost.revenue["by_stream"]:
+        revenue_values = (
+            str(stream["stream"]),
+            str(stream["item_id"]),
+            str(stream["family"] or "—"),
+            format_money(stream["enabled_usd"], currency),
+            format_money(stream["attributed_usd"], currency),
+        )
+        lines.append(
+            "| "
+            + " | ".join(_markdown_cell(value) for value in revenue_values)
+            + " |"
+        )
+    lines += [
+        "",
+        "| Period | Enabled | Attributed |",
+        "|---|---:|---:|",
+    ]
+    for period in cost.revenue["by_period"]:
+        revenue_period_values = (
+            str(period["label"]),
+            format_money(period["enabled_usd"], currency),
+            format_money(period["attributed_usd"], currency),
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                _markdown_cell(value) for value in revenue_period_values
+            )
+            + " |"
+        )
+    lines += [
+        "",
+        "Enabled revenue: "
+        + _markdown_inline(
+            format_money(cost.revenue["enabled_total"], currency)
+        )
+        + ".",
+        "",
+        "Attributed revenue: "
+        + _markdown_inline(
+            format_money(cost.revenue["attributed_total"], currency)
+        )
+        + ".",
+        "",
+        "Net of attributed revenue — attribution is a convention, see docs: "
+        + _markdown_inline(format_money(cost.net_of_attributed_usd, currency))
+        + ".",
+        "",
+    ]
+    return lines
+
+
 # -- JSON ---------------------------------------------------------------
 
 
@@ -229,6 +461,7 @@ def budget_markdown(
     selection: Selection,
     cost: SelectionCost,
     narrative: bool = False,
+    periods: bool = False,
 ) -> str:
     """Render the markdown budget document (``budget --output``)."""
     currency = cost.currency
@@ -314,6 +547,11 @@ def budget_markdown(
             "",
         ]
 
+    if periods:
+        lines += _period_markdown(portfolio, cost)
+    if cost.revenue["by_stream"]:
+        lines += _revenue_markdown(cost)
+
     if narrative:
         lines += [budget_narrative(portfolio, selection, cost), ""]
     return "\n".join(lines).rstrip() + "\n"
@@ -324,14 +562,13 @@ def budget_narrative(
 ) -> str:
     """Render the narrative skeleton from the Jinja template."""
     currency = cost.currency
-    menu_items = portfolio.menu.items_by_id
     roles = portfolio.rates.roles_by_name
     items = []
     for line in cost.items:
         if line.fraction <= 0:
             continue
-        item = menu_items.get(line.item_id)
-        if item is None:
+        item = line.resolved
+        if item is None or item.id != line.item_id:
             continue
         share = (
             f"{format_percent(line.fraction)} of "
@@ -351,6 +588,20 @@ def budget_narrative(
                         if line.fraction < 1
                         else format_money(line.funded_usd, currency)
                     )
+                ),
+                "revenue_enabled": (
+                    _markdown_inline(
+                        format_money(
+                            sum(
+                                stream["enabled_usd"]
+                                for stream in cost.revenue["by_stream"]
+                                if stream["item_id"] == line.item_id
+                            ),
+                            currency,
+                        )
+                    )
+                    if item.revenue
+                    else ""
                 ),
             }
         )
