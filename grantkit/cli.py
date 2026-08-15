@@ -365,6 +365,8 @@ def budget(
     portfolio, selection_id, pack = _load_portfolio_target(path, selection_id)
 
     if check_only:
+        if selection_id is not None:
+            _resolve_selection(portfolio, selection_id)
         result = CheckResult(items=run_gates(portfolio, selection_id, pack))
         if as_json:
             sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")

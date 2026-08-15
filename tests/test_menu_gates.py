@@ -182,6 +182,30 @@ def test_dependency_cycle_reported_once_despite_duplicate_deps(
     assert len(_by_rule(items, "dependency_cycle")) == 1
 
 
+def test_dependency_cycle_handles_deep_graph_iteratively(
+    make_portfolio, portfolio_menu
+):
+    count = 1200
+    portfolio_menu["items"] = [
+        {
+            "id": f"node-{index:04d}",
+            "type": "platform",
+            "title": f"Node {index}",
+            "what": "A synthetic dependency node.",
+            "evidence": "Node completed.",
+            "status": "planned",
+            "dependencies": [
+                f"node-{index + 1:04d}" if index + 1 < count else "node-0000"
+            ],
+            "provenance": ["synthetic"],
+            "resourcing": {"amount_usd": 1},
+        }
+        for index in range(count)
+    ]
+    items = _gates(make_portfolio(menu=portfolio_menu, selections=[]))
+    assert len(_by_rule(items, "dependency_cycle")) == 1
+
+
 def test_unnamed_selection_reported_with_placeholder(
     make_portfolio, portfolio_selections
 ):
@@ -199,6 +223,20 @@ def test_fraction_out_of_range(make_portfolio, portfolio_selections):
     hits = _by_rule(items, "fraction_out_of_range")
     assert len(hits) == 3
     assert all(item.level == "error" for item in hits)
+
+
+def test_scoped_gates_validate_out_of_scope_binding_fractions(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"][0]["fraction"] = -0.5
+    portfolio_selections[1]["selections"][0]["fraction"] = 1.0
+    items = _gates(
+        make_portfolio(selections=portfolio_selections),
+        selection_id="sel-live-b",
+    )
+    hits = _by_rule(items, "fraction_out_of_range")
+    assert len(hits) == 1
+    assert hits[0].section == "sel-live-a"
 
 
 def test_org_base_type(make_portfolio, portfolio_selections):
@@ -331,6 +369,14 @@ def test_over_target_warning(make_portfolio, portfolio_selections):
     assert "ask, not a funder cap" in hits[0].message
 
 
+def test_zero_target_does_not_divide_by_zero(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["target_usd"] = 0
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    assert _by_rule(items, "over_target") == []
+
+
 def test_load_factor_suspicious_low_and_high(make_portfolio, portfolio_rates):
     portfolio_rates["roles"][1]["loaded_usd"] = 150000  # equals base
     portfolio_rates["roles"][0]["loaded_usd"] = 700000  # 2.9x base
@@ -447,6 +493,14 @@ def test_selection_id_scopes_per_selection_gates(
     assert _by_rule(unscoped, "unknown_item")
 
 
+def test_unknown_selection_id_is_an_error(make_portfolio):
+    items = _gates(make_portfolio(), selection_id="ghost")
+    hits = _by_rule(items, "unknown_selection")
+    assert len(hits) == 1
+    assert hits[0].level == "error"
+    assert "sel-live-a" in hits[0].message
+
+
 # -- pack caps ----------------------------------------------------------
 
 
@@ -481,3 +535,16 @@ def test_pack_caps_pass_when_under(make_portfolio):
         pack=_pack(total_cap=2000000, annual_cap=2000000),
     )
     assert items == []
+
+
+def test_pack_caps_reject_currency_mismatch(make_portfolio):
+    items = _gates(
+        make_portfolio(),
+        selection_id="sel-live-a",
+        pack=_pack(currency="GBP", total_cap=200000),
+    )
+    hits = _by_rule(items, "budget_currency_mismatch")
+    assert len(hits) == 1
+    assert hits[0].level == "error"
+    assert "USD" in hits[0].message and "GBP" in hits[0].message
+    assert _by_rule(items, "budget_over_total_cap") == []

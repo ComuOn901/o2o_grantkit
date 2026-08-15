@@ -13,11 +13,12 @@ Gate order:
    short-circuit: structural gates need well-formed documents.
 2. Menu/rates integrity: unknown roles and units, unresolved dependencies,
    dependency cycles, and the advisory rates heuristics.
-3. The co-funding gate (``cofunding_over_allocated``): for each item, the
+3. Portfolio fraction ranges and the co-funding gate
+   (``cofunding_over_allocated``): for each item, the
    summed fractions across ``live``/``awarded`` selections must not exceed
    1 (tolerance 1e-9). Drafts are free to over-plan — the invariant binds
    simultaneous live applications, and fires when they go live.
-4. Per-selection gates: unknown items, fraction ranges, duplicates,
+4. Per-selection gates: unknown items, duplicates,
    org-base typing, unfunded dependencies, the advisory target check, and
    funder caps from a rule pack when one is bound.
 
@@ -73,11 +74,25 @@ def run_gates(
 
     items += _menu_gates(portfolio)
     items += _rates_gates(portfolio)
+    items += _fraction_gates(portfolio)
     items += _cofunding_gate(portfolio)
 
     if selection_id is not None:
         target = portfolio.get_selection(selection_id)
-        scope = [target] if target is not None else []
+        if target is None:
+            available = ", ".join(portfolio.selection_ids) or "(none)"
+            items.append(
+                CheckItem(
+                    level="error",
+                    rule="unknown_selection",
+                    message=(
+                        f"Selection '{selection_id}' was not found in the "
+                        f"portfolio (available: {available})."
+                    ),
+                )
+            )
+            return items
+        scope = [target]
     else:
         scope = list(portfolio.selections)
     for selection in scope:
@@ -209,40 +224,49 @@ def _menu_gates(portfolio: Portfolio) -> list[CheckItem]:
 
 
 def _cycle_gate(portfolio: Portfolio) -> list[CheckItem]:
-    """Detect dependency cycles with a DFS in menu order."""
+    """Detect dependency cycles with an iterative DFS in menu order."""
     menu = portfolio.menu
     known = menu.items_by_id
     out: list[CheckItem] = []
     done: set[str] = set()
     reported: set[frozenset[str]] = set()
 
-    def visit(item_id: str, stack: list[str]) -> None:
-        if item_id in done:
-            return
-        if item_id in stack:
-            cycle = stack[stack.index(item_id) :] + [item_id]
-            key = frozenset(cycle)
-            if key not in reported:
-                reported.add(key)
-                out.append(
-                    CheckItem(
-                        level="error",
-                        rule="dependency_cycle",
-                        message=(
-                            "Dependency cycle: " + " -> ".join(cycle) + "."
-                        ),
-                    )
-                )
-            return
-        stack.append(item_id)
-        for dep in known[item_id].dependencies:
-            if dep in known:
-                visit(dep, stack)
-        stack.pop()
-        done.add(item_id)
-
     for item in menu.items:
-        visit(item.id, [])
+        if item.id in done:
+            continue
+        active: list[str] = []
+        active_index: dict[str, int] = {}
+        stack: list[tuple[str, bool]] = [(item.id, False)]
+        while stack:
+            item_id, exiting = stack.pop()
+            if exiting:
+                active.pop()
+                active_index.pop(item_id)
+                done.add(item_id)
+                continue
+            if item_id in done:
+                continue
+            if item_id in active_index:
+                cycle = active[active_index[item_id] :] + [item_id]
+                key = frozenset(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    out.append(
+                        CheckItem(
+                            level="error",
+                            rule="dependency_cycle",
+                            message=(
+                                "Dependency cycle: " + " -> ".join(cycle) + "."
+                            ),
+                        )
+                    )
+                continue
+            active_index[item_id] = len(active)
+            active.append(item_id)
+            stack.append((item_id, True))
+            for dep in reversed(known[item_id].dependencies):
+                if dep in known:
+                    stack.append((dep, False))
     return out
 
 
@@ -298,7 +322,42 @@ def _rates_gates(portfolio: Portfolio) -> list[CheckItem]:
     return out
 
 
-# -- 3. the co-funding gate (C2) ----------------------------------------
+# -- 3. portfolio fraction integrity and co-funding (C2) ----------------
+
+
+def _fraction_gates(portfolio: Portfolio) -> list[CheckItem]:
+    """Validate every fraction used by the portfolio-wide C2 sum."""
+    out: list[CheckItem] = []
+    for selection in portfolio.selections:
+        sid = selection.id
+        for line in selection.selections:
+            if line.fraction < 0 or line.fraction > 1:
+                out.append(
+                    CheckItem(
+                        level="error",
+                        rule="fraction_out_of_range",
+                        message=(
+                            f"Selection '{sid}' item '{line.item}' fraction "
+                            f"{line.fraction:g} is outside [0, 1]."
+                        ),
+                        section=sid,
+                    )
+                )
+        if selection.org_base is not None:
+            base_fraction = selection.org_base.fraction
+            if base_fraction < 0 or base_fraction > 1:
+                out.append(
+                    CheckItem(
+                        level="error",
+                        rule="fraction_out_of_range",
+                        message=(
+                            f"Selection '{sid}' org_base fraction "
+                            f"{base_fraction:g} is outside [0, 1]."
+                        ),
+                        section=sid,
+                    )
+                )
+    return out
 
 
 def _cofunding_gate(portfolio: Portfolio) -> list[CheckItem]:
@@ -366,18 +425,6 @@ def _selection_gates(
                     section=sid,
                 )
             )
-        if line.fraction < 0 or line.fraction > 1:
-            out.append(
-                CheckItem(
-                    level="error",
-                    rule="fraction_out_of_range",
-                    message=(
-                        f"Selection '{sid}' item '{line.item}' fraction "
-                        f"{line.fraction:g} is outside [0, 1]."
-                    ),
-                    section=sid,
-                )
-            )
         if line.item in seen:
             duplicates.add(line.item)
         seen.add(line.item)
@@ -396,7 +443,6 @@ def _selection_gates(
 
     if selection.org_base is not None:
         base_id = selection.org_base.item
-        base_fraction = selection.org_base.fraction
         if base_id not in known_items:
             out.append(
                 CheckItem(
@@ -422,19 +468,6 @@ def _selection_gates(
                     section=sid,
                 )
             )
-        if base_fraction < 0 or base_fraction > 1:
-            out.append(
-                CheckItem(
-                    level="error",
-                    rule="fraction_out_of_range",
-                    message=(
-                        f"Selection '{sid}' org_base fraction "
-                        f"{base_fraction:g} is outside [0, 1]."
-                    ),
-                    section=sid,
-                )
-            )
-
     out += _unfunded_dependency_gate(portfolio, selection)
 
     # Compile-dependent gates only make sense when references resolve.
@@ -445,10 +478,7 @@ def _selection_gates(
     except KeyError:  # pragma: no cover - guarded above
         return out
     currency = menu.currency
-    if (
-        selection.target_usd is not None
-        and cost.total_usd > selection.target_usd
-    ):
+    if selection.target_usd and cost.total_usd > selection.target_usd:
         fit = cost.total_usd / selection.target_usd
         out.append(
             CheckItem(
@@ -464,7 +494,7 @@ def _selection_gates(
                 section=sid,
             )
         )
-    out += _pack_cap_gates(selection, cost.total_usd, pack)
+    out += _pack_cap_gates(selection, cost.total_usd, currency, pack)
     return out
 
 
@@ -517,6 +547,7 @@ def _unfunded_dependency_gate(
 def _pack_cap_gates(
     selection: Selection,
     total_usd: float,
+    portfolio_currency: str,
     pack: Optional[FunderPack],
 ) -> list[CheckItem]:
     """Funder caps from a bound rule pack, applied to the compiled total.
@@ -530,6 +561,20 @@ def _pack_cap_gates(
     out: list[CheckItem] = []
     cur = rules.currency
     sid = selection.id
+    has_cap = rules.total_cap is not None or rules.annual_cap is not None
+    if has_cap and portfolio_currency != cur:
+        return [
+            CheckItem(
+                level="error",
+                rule="budget_currency_mismatch",
+                message=(
+                    f"Selection '{sid}' compiles in {portfolio_currency}, "
+                    f"but the funder caps are in {cur}; GrantKit does not "
+                    "convert currencies, so cap checks were skipped."
+                ),
+                section=sid,
+            )
+        ]
     if rules.total_cap is not None and total_usd > rules.total_cap:
         out.append(
             CheckItem(

@@ -219,6 +219,23 @@ def test_budget_check_errors_exit_1_with_json(
     assert "cofunding_over_allocated" in rules
 
 
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_budget_check_json_rejects_non_finite_numbers(
+    make_portfolio, portfolio_selections, value
+):
+    portfolio_selections[0]["selections"][0]["fraction"] = value
+    root = make_portfolio(selections=portfolio_selections)
+    result = _invoke("--check", "--json", root)
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["errors"] >= 1
+    assert any(
+        item["rule"] == "selection_invalid" for item in payload["items"]
+    )
+    assert "NaN" not in result.stdout
+    assert "Infinity" not in result.stdout
+
+
 def test_budget_check_warnings_exit_0(make_portfolio, portfolio_selections):
     portfolio_selections[0]["target_usd"] = 100000
     result = _invoke(
@@ -248,18 +265,10 @@ def test_budget_check_scopes_to_selection(
     assert unscoped.exit_code == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "defect: budget --check --selection with an unknown id exits 0 "
-        "and prints 'All checks passed' — run_gates silently scopes to "
-        "no selection, so per-selection gates and pack caps are skipped "
-        "— while plain budget exits 2 for the same typo"
-    ),
-)
 def test_budget_check_unknown_selection_id_fails(make_portfolio):
     result = _invoke("--check", "--selection", "ghost", make_portfolio())
-    assert result.exit_code != 0
+    assert result.exit_code == 2
+    assert "No selection 'ghost'" in result.output
 
 
 # -- grant-project binding ----------------------------------------------

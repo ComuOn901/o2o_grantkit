@@ -27,6 +27,7 @@ checks (load factors, component sums) are advisory warnings emitted by
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -67,8 +68,15 @@ def _is_int_or_none(value: Any) -> bool:
     )
 
 
-def _is_number(value: Any) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+def _is_number(value: Any) -> TypeGuard[int | float]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # Extremely large integers cannot be represented by the float-based
+        # engine and would otherwise become infinity during parsing.
+        return False
 
 
 def _is_number_or_none(value: Any) -> bool:
@@ -472,8 +480,11 @@ def _validate_resourcing(
                         f"non-negative number"
                     )
     for key in ("contract_usd", "recurring_usd_per_year", "amount_usd"):
-        if not _is_number_or_none(resourcing.get(key)):
-            errors.append(f"{where} '{key}' must be a number or null")
+        value = resourcing.get(key)
+        if value is not None and (not _is_number(value) or value < 0):
+            errors.append(
+                f"{where} '{key}' must be a non-negative number or null"
+            )
     if "overhead_included" in resourcing and not isinstance(
         resourcing["overhead_included"], bool
     ):
@@ -528,8 +539,11 @@ def validate_menu(data: Any) -> list[str]:
                 if not isinstance(entry, dict):
                     errors.append(f"{where} must be a mapping")
                     continue
-                if not _is_number(entry.get("usd_per_unit")):
-                    errors.append(f"{where} 'usd_per_unit' must be a number")
+                price = entry.get("usd_per_unit")
+                if not _is_number(price) or price < 0:
+                    errors.append(
+                        f"{where} 'usd_per_unit' must be a non-negative number"
+                    )
                 provenance = entry.get("provenance")
                 if provenance is not None and not isinstance(provenance, list):
                     errors.append(f"{where} 'provenance' must be a list")
@@ -679,8 +693,9 @@ def validate_selection(data: Any) -> list[str]:
             f"invalid status '{status}' "
             f"(allowed: {sorted(VALID_SELECTION_STATUSES)})"
         )
-    if not _is_number_or_none(data.get("target_usd")):
-        errors.append("'target_usd' must be a number or null")
+    target = data.get("target_usd")
+    if target is not None and (not _is_number(target) or target < 0):
+        errors.append("'target_usd' must be a non-negative number or null")
     window = data.get("window_months")
     if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
         errors.append("'window_months' must be an integer > 0")

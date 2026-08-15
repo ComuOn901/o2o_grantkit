@@ -1,5 +1,7 @@
 """Tests for the budget-model document schemas."""
 
+from copy import deepcopy
+
 import pytest
 
 from grantkit.menu import (
@@ -10,6 +12,21 @@ from grantkit.menu import (
     validate_rates,
     validate_selection,
 )
+
+
+def _set_path(data, path, value):
+    target = data
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
+NON_FINITE = [
+    pytest.param(float("nan"), id="nan"),
+    pytest.param(float("inf"), id="positive-infinity"),
+    pytest.param(float("-inf"), id="negative-infinity"),
+]
+
 
 # -- menu.yaml ----------------------------------------------------------
 
@@ -132,6 +149,49 @@ def test_menu_item_units_non_negative(portfolio_menu):
 def test_menu_item_money_fields_numeric(portfolio_menu):
     portfolio_menu["items"][2]["resourcing"]["contract_usd"] = "lots"
     assert any("contract_usd" in e for e in validate_menu(portfolio_menu))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("unit_costs", "module", "usd_per_unit"),
+        ("items", 0, "resourcing", "amount_usd"),
+        ("items", 2, "resourcing", "contract_usd"),
+        ("items", 4, "resourcing", "recurring_usd_per_year"),
+    ],
+    ids=("unit-price", "flat", "contract", "recurring"),
+)
+def test_menu_money_fields_must_be_non_negative(portfolio_menu, path):
+    _set_path(portfolio_menu, path, -0.01)
+    assert any("non-negative" in e for e in validate_menu(portfolio_menu))
+
+
+@pytest.mark.parametrize("value", NON_FINITE)
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("overheads", "fiscal_sponsorship_rate"),
+        ("unit_costs", "module", "usd_per_unit"),
+        ("items", 1, "resourcing", "fte_months", "Encoding Lead"),
+        ("items", 3, "resourcing", "units", "module"),
+        ("items", 2, "resourcing", "contract_usd"),
+        ("items", 4, "resourcing", "recurring_usd_per_year"),
+        ("items", 0, "resourcing", "amount_usd"),
+    ],
+    ids=(
+        "overhead-rate",
+        "unit-price",
+        "fte-months",
+        "unit-count",
+        "contract",
+        "recurring",
+        "flat",
+    ),
+)
+def test_menu_numeric_fields_must_be_finite(portfolio_menu, path, value):
+    data = deepcopy(portfolio_menu)
+    _set_path(data, path, value)
+    assert validate_menu(data)
 
 
 def test_menu_item_overhead_included_boolean(portfolio_menu):
@@ -269,6 +329,24 @@ def test_rates_benchmark_types(portfolio_rates):
     )
 
 
+@pytest.mark.parametrize("value", NON_FINITE)
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("roles", 0, "loaded_usd"),
+        ("roles", 0, "base_usd"),
+        ("roles", 0, "components", 0, "amount_usd"),
+        ("roles", 0, "benchmark", "percentile"),
+        ("roles", 0, "benchmark", "value_usd"),
+    ],
+    ids=("loaded", "base", "component", "percentile", "benchmark-value"),
+)
+def test_rates_numeric_fields_must_be_finite(portfolio_rates, path, value):
+    data = deepcopy(portfolio_rates)
+    _set_path(data, path, value)
+    assert validate_rates(data)
+
+
 def test_rates_provenance_must_be_list(portfolio_rates):
     portfolio_rates["roles"][0]["provenance"] = "synthetic"
     assert any("'provenance'" in e for e in validate_rates(portfolio_rates))
@@ -366,6 +444,42 @@ def test_selection_target_must_be_number(portfolio_selections):
     selection = _selection(portfolio_selections)
     selection["target_usd"] = "2M"
     assert any("target_usd" in e for e in validate_selection(selection))
+
+
+def test_selection_target_must_be_non_negative(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["target_usd"] = -1
+    assert any("non-negative" in e for e in validate_selection(selection))
+
+
+def test_selection_target_zero_is_valid(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["target_usd"] = 0
+    assert validate_selection(selection) == []
+
+
+def test_unrepresentably_large_number_is_rejected(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["target_usd"] = 10**10000
+    assert any("target_usd" in e for e in validate_selection(selection))
+
+
+@pytest.mark.parametrize("value", NON_FINITE)
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("target_usd",),
+        ("org_base", "fraction"),
+        ("selections", 0, "fraction"),
+    ],
+    ids=("target", "org-base-fraction", "selection-fraction"),
+)
+def test_selection_numeric_fields_must_be_finite(
+    portfolio_selections, path, value
+):
+    selection = deepcopy(_selection(portfolio_selections))
+    _set_path(selection, path, value)
+    assert validate_selection(selection)
 
 
 @pytest.mark.parametrize("window", [None, 0, -3, 2.5, True])
