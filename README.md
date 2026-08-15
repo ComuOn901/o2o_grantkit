@@ -51,7 +51,7 @@ grantkit check
 grantkit build --format pdf --share
 ```
 
-## The five verbs
+## The six verbs
 
 | Verb | What it does |
 |------|--------------|
@@ -60,6 +60,7 @@ grantkit build --format pdf --share
 | `grantkit build [--format md\|html\|pdf\|docx] [--share]` | Compile responses into one document; always writes `status.json`. |
 | `grantkit review [--pack]` | Emit a structured review packet for an AI agent (no AI calls). |
 | `grantkit status [--json]` | Completion %, per-section word counts, deadline countdown. |
+| `grantkit budget [--selection ID] [--check]` | Compile a budget from a priced work-item menu + rates + a selection. |
 
 Every verb takes an optional path to the grant directory (default `.`).
 
@@ -103,6 +104,27 @@ today:
    `tests/test_packs.py`.
 
 The full schema is documented in `grantkit/packs/schema.py`.
+
+## Budget model
+
+Stop rebuilding the same budget spreadsheet per proposal. Price your
+org's work once as a **menu** of items (`menu.yaml`), point it at a
+**rates** file of fully-loaded personnel costs from a rates provider
+(`rates.yaml` — [eggnest-employer](docs/rates-contract.md) is the
+reference), and express each proposal as a **selection** of menu items
+with funding fractions:
+
+```bash
+grantkit budget org-portfolio --selection oaif-2026   # compiled tables
+grantkit budget org-portfolio --check                 # integrity gates
+```
+
+The compiled budget is a deterministic function of the three files, and
+the gates catch what spreadsheets don't: the co-funding gate errors when
+live proposals sell the same item past 100%, and fee-inclusive blocks
+are never double-charged overhead. A grant project can bind one
+selection via `budget_model:` in `grant.yaml`, which folds the gates
+into `grantkit check`. See [docs/budget-model.md](docs/budget-model.md).
 
 ## CI for grants
 
