@@ -14,6 +14,12 @@ It validates structure and flags advisory heuristics, but it never
 invents a funder limit and never recomputes your rates provider's
 numbers (see [the rates contract](rates-contract.md)).
 
+The v0 schemas tolerate unknown keys in all three documents so producers
+can carry extensions. Unknown keys are not compiled or rendered. This also
+means an optional-key typo is ignored rather than guessed: use the documented
+spellings exactly, especially `overhead_included`, because a misspelling there
+leaves its default (`false`) in effect and can reapply overhead.
+
 ## The portfolio directory
 
 A portfolio directory holds the three document kinds:
@@ -119,7 +125,8 @@ personnel rows, but stays visible in the compiled tables.
 ## The cost model
 
 All money is carried as floats internally; rendering rounds to whole
-dollars (half up) at output.
+dollars (half up) at output. Numeric inputs must be finite. Cost inputs and
+`target_usd` must be non-negative; the model has no credit-line convention.
 
 Per item:
 
@@ -139,15 +146,17 @@ work per line  = fraction x one_time
 org base       = fraction x one_time(org_base.item)
 overhead       = rate x (everything except fee-inclusive amounts)
 total          = work + org base + overhead
-fit            = total / target_usd        (when a target is set)
+fit            = total / target_usd        (when target_usd > 0)
 ```
 
 Two deliberate choices, matching upstream practice:
 
 - **The window does not prorate flat blocks.** An org-base claim is a
-  fraction of a flat amount, not a run rate.
-- **Recurring costs are prorated by the window** (`x window/12`) and
-  are overhead-bearing.
+  fraction of an item's one-time cost, not a run rate. It does not price that
+  item's `recurring_usd_per_year`; recurring is included only when the item
+  appears as a regular selection line.
+- **Recurring costs on regular selection lines are prorated by the window**
+  (`x window/12`) and are overhead-bearing.
 
 ## Integrity gates
 
@@ -168,6 +177,7 @@ Errors:
 | `org_base_type` | `org_base.item` exists but its type is not `org-base`. |
 | `selection_duplicate_item` | The same item appears twice in one selection. |
 | `cofunding_over_allocated` | The co-funding gate — see below. |
+| `budget_currency_mismatch` | Bound rule pack only: the portfolio and the funder's caps use different currencies, so cap checks cannot run. |
 | `budget_over_total_cap` | Bound rule pack only: the compiled total exceeds the funder's published total cap. |
 
 Warnings (advisory heuristics, clearly labeled — not funder rules):
@@ -230,6 +240,13 @@ grantkit budget [PATH]
                      (without --output, prints the markdown document)
 ```
 
+Warnings do not make `budget --check` fail; `--strict` belongs to the proposal
+`check` verb and is not a budget option. `--output` and `--narrative` cannot be
+combined with `--check`. With `--json`, `--narrative` requires `--output`, so
+the JSON stays alone on stdout while the narrative goes to the markdown file.
+If compilation is blocked by gate errors, `--json` emits the structured gate
+findings instead of a compiled budget.
+
 The default output is rich tables: header with a generated-from
 reproducibility line, selected items, personnel (with a benchmark
 column when the rates carry benchmarks), and a category summary
@@ -246,7 +263,8 @@ connective boilerplate.
 ## Scope
 
 Out of scope in v0: multi-year phasing beyond window proration,
-currency conversion (a menu/rates currency mismatch is a validation
-error), emitting a legacy NSF-category `budget.yaml` from a selection
-(a possible future bridge), and BLS validation of menu roles (the
-existing salary validator remains `budget.yaml`-only).
+currency conversion (a menu/rates mismatch is a validation error, and a
+portfolio/funder-cap mismatch is a `budget_currency_mismatch` error), emitting
+a legacy NSF-category `budget.yaml` from a selection (a possible future
+bridge), and BLS validation of menu roles (the existing salary validator
+remains `budget.yaml`-only).
