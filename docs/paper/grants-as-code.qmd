@@ -1,0 +1,146 @@
+---
+title: "Grants as code: compiled budgets, funder views, and machine-checkable applications"
+author:
+  - name: Max Ghenis
+    affiliations: [PolicyEngine, The Axiom Foundation]
+date: 2026-08-14
+format:
+  html: default
+  pdf: default
+abstract: >
+  Grant applications are assembled by hand from three kinds of material that
+  organizations already hold in structured form: the work they intend to do,
+  the cost of the people and systems that do it, and the rules of the funder's
+  form. We describe a pipeline that treats each as data — a priced menu of
+  work items with machine-checkable completion evidence; personnel rates
+  derived from encoded tax and retirement law with benchmark provenance;
+  funder proposals as selections over the shared menu, with co-funding
+  fractions that make cross-application double-billing a pre-award,
+  machine-checked invariant; and versioned funder packs that validate and
+  assemble the application in continuous integration. We situate the pipeline
+  against six adjacent tool landscapes and identify which components are new.
+  All components are open source. [DRAFT — abstract rewrites after the
+  landscape section lands.]
+---
+
+<!--
+STATUS: skeleton v0 (2026-08-14). Authored while the Axiom diligence context
+was live; landscape.md is being produced by a research pass testing the claims
+below adversarially. Pipeline before publication (per standing directives):
+landscape merge → prose draft → sol adversarial review r1 → fixes → Max-voice
+pass (longform pipeline; fable) → academic-referee cycle if journal-bound.
+Numbers policy: every figure cites a receipt or is labeled an assumption;
+no-fabricated-mechanisms applies to every tool description in §2 (describe
+from their docs, cited, or cut).
+Sync: grantkit.io gets a /paper embed route (paper-embed pattern) once public.
+-->
+
+# The claims {#sec-claims}
+
+The paper stands or falls on six claims. Each is falsifiable against the
+landscape; the research pass is instructed to kill any with prior art, and
+verdicts (NOVEL / PARTIAL / EXISTS) flow into @sec-landscape.
+
+**C1 — Budgets as compiled artifacts.** A grant budget should be the output
+of a pure function over (menu items, rates, selection), reproducible in CI,
+not a spreadsheet edited toward a total. Changing a rate or a selection
+regenerates every downstream table identically — in the proposal document,
+the funder deck, and the org's public planning pages.
+
+**C2 — The pre-award double-billing gate.** When proposals are selections
+with per-item co-funding fractions, "no item is more than 100% funded across
+simultaneous applications" becomes a machine-checked invariant at draft time.
+Federal post-award machinery (2 CFR 200 effort certification) attests this
+retrospectively and manually; we know of no pre-award, automatic equivalent.
+[Verify against landscape lane 4.]
+
+**C3 — Rule-derived personnel rates.** Loaded personnel costs computed from
+encoded law — employer payroll taxes by jurisdiction, retirement contribution
+caps (IRS §415(c)/§402(g)), benefit schedules — rather than flat multipliers,
+with market benchmarks (BLS OES, sourced percentiles) attached per role. The
+budget's comp-justification appendix becomes a generated artifact.
+
+**C4 — Funder-as-view.** One organizational substrate (the menu), many
+proposals as selections over it. The org maintains its work-item database
+once; each funder sees a view: selected items, fractions, an org-base
+allocation, a window. Views make co-funding legible instead of narrative.
+
+**C5 — Funder packs: the application as a checked build.** Funder form rules
+— section structure, word/character/page limits, budget caps, required
+attachments, placeholder gates — as versioned code; the application repo
+builds in CI to a status artifact and an assembled document. (Shipped today
+in grantkit 0.2.x; the claim to test is whether anyone else does this.)
+
+**C6 — The configurator.** Because budgets compile (C1), a funder can be
+handed the model itself: presets and toggles over the same menu and rates the
+organization runs on, every configuration inside adjudicated bounds. Scenario
+pressure-testing becomes something the funder does live, not a static
+appendix.
+
+The through-line — and the paper's one-sentence thesis: **the grant pipeline
+inherits the properties of the software pipeline the moment its inputs become
+data: reproducibility, diffability, invariants checked before submission
+instead of audited after award.**
+
+# Landscape {#sec-landscape}
+
+[GENERATED SECTION — merges docs/paper/landscape.md when the research pass
+lands. Six lanes: applicant-side writing tools; funder-side grants management;
+nonprofit budgeting/finance; federal compliance machinery (effort
+certification, APD/FFP match, SF-424A, Grants.gov workspace); docs-as-code
+and policy-as-code analogies; compensation benchmarking. Ends with the
+claim × verdict × nearest-neighbor table, which rewrites @sec-claims's
+NOVEL/PARTIAL/EXISTS markers and the abstract's novelty sentence.]
+
+# The pipeline {#sec-pipeline}
+
+[Architecture section. Layers, each stateless, org data in org repos:
+
+1. **Rates** — eggnest-employer: scenario.yaml (org defaults: retirement
+   rate and caps, employer tax state, benefit schedules; roles with SOC
+   codes and salaries; benchmark CSV with sourced percentiles) → rates
+   export. The Axiom Foundation 2026 scenario is the running example.
+2. **Menu** — priced work items: type, one-sentence what, machine-checkable
+   done-evidence, resourcing (FTE-months by role, encoding modules, contract
+   dollars), dependencies, revenue linkage, provenance. Seeded 24 items from
+   the Axiom diligence corpus; schema in axiom-roadmap-dashboard PR #2,
+   migrating to grantkit-canonical YAML.
+3. **Views** — selections with fractions + org-base allocation. Worked
+   examples: a $2M concept note priced at 134% of target on first selection
+   (the trim made visible pre-submission); a three-level funder structure as
+   three nested views.
+4. **grantkit budget** — tables, caps, the C2 gate. **grantkit check/build**
+   — packs, placeholders, assembly, status.json. CI runs both; the funder
+   sees the same numbers the org plans by.
+5. **Configurator** — interactive surface over 1–4.
+
+Include the reproduction block: every table in this paper regenerates from
+the fixture scenario + menu via `grantkit budget`; the paper is its own CI
+check (C1 demonstrated by construction).]
+
+# Case study {#sec-case}
+
+[The August 2026 diligence sprint, anonymized where required: a bottoms-up
+org model derived four coherent org shapes ($21.2M–$37.8M five-year) from one
+rates+items substrate in an evening; the same substrate priced a $2M concept
+note, exposed a 34% overshoot before submission, produced funder-level
+presets, and surfaced one leadership pricing decision (levy vs full-price
+attestation posture) that a spreadsheet workflow had left implicit for weeks.
+Numbers policy applies; co-funder names only where already public.]
+
+# What this does not solve {#sec-limits}
+
+[Honest boundary section, in the house style of volunteered scope carve-outs:
+narrative quality is untouched (the prose is still written, by people or
+models — the pipeline only guarantees the prose sits on true numbers);
+relationship work is untouched; menus can be gamed by the org itself (garbage
+items in, plausible budget out) — the gates check consistency, not wisdom;
+funder adoption of configurators is untested beyond one live diligence;
+rule-derived rates currently cover US federal + state payroll/retirement law
+only.]
+
+# Availability {#sec-availability}
+
+[grantkit (PyPI, MIT), eggnest-employer, the menu schema; grantkit.io/paper
+embed. Fixture: an anonymized org scenario so every table reproduces without
+private data.]
