@@ -294,6 +294,14 @@ def _assert_rule(errors, rule):
     assert rule in _rules(errors), [str(error) for error in errors]
 
 
+def _assert_version_error(errors, construct, required_schema):
+    messages = [str(error) for error in errors]
+    assert any(
+        f"construct '{construct}'" in message and required_schema in message
+        for message in messages
+    ), messages
+
+
 def test_complete_v1_documents_validate():
     menu = _menu()
     assert validate_menu(menu) == []
@@ -326,34 +334,152 @@ def test_v0_fixture_documents_remain_valid(
         assert validate_selection(selection, portfolio_menu) == []
 
 
-@pytest.mark.parametrize(
-    "schema",
-    ["grantkit-menu/v0", "grantkit-menu/v1"],
-)
-def test_both_menu_schema_markers_are_accepted(schema):
+def test_menu_v1_constructs_require_the_v1_marker():
     menu = _menu()
-    menu["schema"] = schema
-    assert validate_menu(menu) == []
+    menu["schema"] = "grantkit-menu/v0"
+    errors = validate_menu(menu)
+
+    for construct in (
+        "kinds",
+        "kind_presets",
+        "kind",
+        "params",
+        "revenue",
+        "roster",
+        "non_personnel_usd_per_year",
+    ):
+        _assert_version_error(errors, construct, "grantkit-menu/v1")
 
 
-@pytest.mark.parametrize(
-    "schema",
-    ["grantkit-rates/v0", "grantkit-rates/v1"],
-)
-def test_both_rates_schema_markers_are_accepted(schema):
+def test_rates_v1_constructs_require_the_v1_marker():
     rates = _rates()
-    rates["schema"] = schema
-    assert validate_rates(rates) == []
+    rates["schema"] = "grantkit-rates/v0"
+    errors = validate_rates(rates)
+
+    _assert_version_error(errors, "capacity_fte", "grantkit-rates/v1")
 
 
-@pytest.mark.parametrize(
-    "schema",
-    ["grantkit-selection/v0", "grantkit-selection/v1"],
-)
-def test_both_selection_schema_markers_are_accepted(schema):
+def test_selection_v1_constructs_require_the_v1_marker():
     selection = _selection()
-    selection["schema"] = schema
-    assert validate_selection(selection, _menu()) == []
+    selection["schema"] = "grantkit-selection/v0"
+    errors = validate_selection(selection, _menu())
+
+    for construct in ("horizon_months", "start_month", "instance"):
+        _assert_version_error(errors, construct, "grantkit-selection/v1")
+
+
+def test_estimates_require_the_matching_v1_schema_markers(
+    portfolio_menu, portfolio_rates
+):
+    portfolio_menu["unit_costs"]["module"]["usd_per_unit"] = _estimate()
+    menu_errors = validate_menu(portfolio_menu)
+    _assert_version_error(menu_errors, "estimate", "grantkit-menu/v1")
+
+    portfolio_rates["roles"][0]["loaded_usd"] = _estimate(320000)
+    rates_errors = validate_rates(portfolio_rates)
+    _assert_version_error(rates_errors, "estimate", "grantkit-rates/v1")
+
+
+def test_nested_kind_revenue_and_estimate_name_required_menu_marker(
+    portfolio_menu,
+):
+    portfolio_menu["kinds"] = {
+        "nested": {
+            "params": {},
+            "resourcing": {"amount_usd": 1},
+            "revenue": [
+                {
+                    "stream": "nested-revenue",
+                    "family": "earned",
+                    "unit": "delivery",
+                    "price_usd": _estimate(),
+                    "volume_per_year": [1],
+                }
+            ],
+        }
+    }
+
+    errors = validate_menu(portfolio_menu)
+
+    for construct in ("kinds", "revenue", "estimate"):
+        _assert_version_error(errors, construct, "grantkit-menu/v1")
+
+
+def test_nested_instance_revenue_and_estimate_name_required_selection_marker():
+    selection = {
+        "schema": "grantkit-selection/v0",
+        "id": "nested-instance",
+        "funder": "Synthetic Fund",
+        "status": "draft",
+        "window_months": 12,
+        "selections": [
+            {
+                "instance": {
+                    "id": "private-work",
+                    "kind": "coverage",
+                    "params": {},
+                    "revenue": [
+                        {
+                            "stream": "nested-revenue",
+                            "family": "earned",
+                            "unit": "delivery",
+                            "price_usd": _estimate(),
+                            "volume_per_year": [1],
+                        }
+                    ],
+                },
+                "fraction": 1,
+            }
+        ],
+    }
+
+    errors = validate_selection(selection, _menu())
+
+    for construct in ("instance", "revenue", "estimate"):
+        _assert_version_error(errors, construct, "grantkit-selection/v1")
+
+
+def test_v0_identifiers_named_central_are_not_estimates(
+    portfolio_menu, portfolio_rates
+):
+    portfolio_menu["unit_costs"]["central"] = {
+        "usd_per_unit": 5,
+        "derivation": "synthetic central unit",
+        "provenance": ["synthetic"],
+    }
+    portfolio_menu["items"][1]["resourcing"]["fte_months"] = {"central": 6}
+    portfolio_rates["roles"][0]["role"] = "central"
+
+    assert validate_menu(portfolio_menu) == []
+    assert validate_rates(portfolio_rates) == []
+
+
+def test_kind_form_identifiers_and_enum_values_named_central_are_not_estimates(
+    portfolio_menu,
+):
+    portfolio_menu["kinds"] = {
+        "central-names": {
+            "params": {
+                "central": {"type": "number", "default": 1},
+                "tier": {
+                    "type": "enum",
+                    "values": ["central"],
+                    "default": "central",
+                },
+            },
+            "resourcing": {
+                "amount_usd": {
+                    "per": {"central": 1},
+                    "by": {"tier": {"central": 2}},
+                }
+            },
+        }
+    }
+
+    errors = validate_menu(portfolio_menu)
+
+    _assert_version_error(errors, "kinds", "grantkit-menu/v1")
+    assert not any("construct 'estimate'" in str(error) for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -532,6 +658,56 @@ def test_kind_param_types_and_inclusive_bounds_are_accepted(param, value):
     menu = _menu()
     menu["items"][1]["params"][param] = value
     assert validate_menu(menu) == []
+
+
+@pytest.mark.parametrize(
+    ("param", "negative"),
+    [("scale", -0.01), ("places", -1)],
+)
+def test_numeric_params_without_min_use_an_implicit_zero_bound(
+    param, negative
+):
+    menu = _menu()
+    del menu["kinds"]["coverage"]["params"][param]["min"]
+    menu["items"][1]["params"][param] = negative
+
+    _assert_rule(validate_menu(menu), "kind_param_invalid")
+
+
+def test_null_numeric_min_uses_the_implicit_zero_bound():
+    menu = _menu()
+    menu["kinds"]["coverage"]["params"]["scale"]["min"] = None
+    menu["items"][1]["params"]["scale"] = -0.01
+
+    _assert_rule(validate_menu(menu), "kind_param_invalid")
+
+
+def test_negative_cost_probe_without_declared_min_fails_validation():
+    menu = _menu()
+    menu["kinds"] = {
+        "cost": {
+            "params": {"quantity": {"type": "number", "default": 1}},
+            "resourcing": {"amount_usd": {"per": {"quantity": 100000}}},
+        }
+    }
+    menu["kind_presets"] = {}
+    menu["items"] = [
+        {
+            "id": "negative-cost",
+            "kind": "cost",
+            "params": {"quantity": -1},
+            "what": "Exercise the implicit numeric bound.",
+            "evidence": "Validation rejects the selection.",
+            "status": "planned",
+            "dependencies": [],
+            "provenance": ["synthetic"],
+        }
+    ]
+
+    errors = validate_menu(menu)
+
+    _assert_rule(errors, "kind_param_invalid")
+    assert any("quantity" in str(error) for error in errors)
 
 
 @pytest.mark.parametrize(

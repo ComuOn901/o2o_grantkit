@@ -777,6 +777,79 @@ def test_role_capacity_counts_roster_base_unscaled_by_funder_share(
     assert "0.75 FTE versus capacity 0.7 FTE" in hit.message
 
 
+def test_role_capacity_counts_shared_roster_base_once(make_portfolio):
+    menu = _v1_menu()
+    menu["items"][2]["resourcing"]["roster"][0]["fte"] = 1.0
+    selections = [
+        _selection(
+            "sel-a",
+            "plain-a",
+            fraction=0,
+            status="live",
+            horizon=12,
+            org_base=True,
+        ),
+        _selection(
+            "sel-b",
+            "plain-b",
+            fraction=0,
+            status="live",
+            horizon=12,
+            org_base=True,
+        ),
+    ]
+    root = _v1_root(
+        make_portfolio,
+        menu=menu,
+        rates=_v1_rates(capacity=1),
+        selections=selections,
+    )
+
+    hits = [
+        item for item in _rules(root) if item.rule == "role_over_allocated"
+    ]
+
+    assert hits == []
+
+
+def test_role_capacity_adds_incremental_demand_to_shared_roster_base(
+    make_portfolio,
+):
+    menu = _v1_menu()
+    menu["items"][2]["resourcing"]["roster"][0]["fte"] = 1.0
+    selections = [
+        _selection(
+            "sel-a",
+            "plain-a",
+            fraction=0.5,
+            status="live",
+            horizon=12,
+            org_base=True,
+        ),
+        _selection(
+            "sel-b",
+            "plain-b",
+            fraction=0.5,
+            status="live",
+            horizon=12,
+            org_base=True,
+        ),
+    ]
+    root = _v1_root(
+        make_portfolio,
+        menu=menu,
+        rates=_v1_rates(capacity=1),
+        selections=selections,
+    )
+
+    hits = [
+        item for item in _rules(root) if item.rule == "role_over_allocated"
+    ]
+
+    assert len(hits) == 1
+    assert "1.5 FTE versus capacity 1 FTE" in hits[0].message
+
+
 # -- outside-window warnings and estimate carriage ---------------------
 
 
@@ -849,20 +922,28 @@ def test_all_json_carries_estimates_independently_per_selection(
     assert "menu.unit_costs.token.usd_per_unit" not in zeta
 
 
-def test_zero_duration_kind_result_is_reported_at_gate_boundary(
-    make_portfolio,
-):
+def test_zero_duration_kind_result_compiles(make_portfolio):
     menu = _v1_menu()
     menu["kinds"]["widget"]["duration_months"] = 0
-    root = _v1_root(make_portfolio, menu=menu)
+    selection = _selection("sel-zero-kind", "kind-z", horizon=12)
+    root = _v1_root(
+        make_portfolio,
+        menu=menu,
+        selections=[selection],
+    )
     findings = run_gates(load_portfolio(root))
-    assert any(
-        item.level == "error" and item.rule == "kind_form_invalid"
-        for item in findings
+    assert not any(item.level == "error" for item in findings)
+
+    result = _invoke("--selection", "sel-zero-kind", "--json", root)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["items"][0]["duration_months"] == 0
+    assert payload["periods"][0]["cost"]["total"] == pytest.approx(
+        payload["total_usd"]
     )
 
 
-def test_zero_duration_inline_instance_is_a_gate_error(make_portfolio):
+def test_zero_duration_inline_instance_compiles(make_portfolio):
     selection = _selection("sel-inline", "plain-a")
     selection["selections"] = [
         {
@@ -877,7 +958,9 @@ def test_zero_duration_inline_instance_is_a_gate_error(make_portfolio):
     ]
     root = _v1_root(make_portfolio, selections=[selection])
     findings = run_gates(load_portfolio(root), "sel-inline")
-    assert any(
-        item.level == "error" and item.rule == "kind_form_invalid"
-        for item in findings
-    )
+    assert not any(item.level == "error" for item in findings)
+
+    result = _invoke("--selection", "sel-inline", "--json", root)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["items"][0]["duration_months"] == 0

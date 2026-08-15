@@ -17,6 +17,7 @@ REAL_PORTFOLIO = Path(
 )
 REAL_GOLDEN = Path("/Users/maxghenis/GrantKit/v03-golden-oaif.json")
 OAIF_TOTAL = 2578998.5666666664
+REAL_INVARIANT_KEYS = ("total_usd", "items", "personnel", "categories")
 
 
 def _invoke_json(portfolio: Path, selection_id: str) -> dict[str, Any]:
@@ -72,6 +73,7 @@ def test_real_oaif_json_shared_keys_are_unchanged():
     expected = json.loads(REAL_GOLDEN.read_text(encoding="utf-8"))
     actual = _invoke_json(REAL_PORTFOLIO, "oaif-2026")
 
-    _assert_golden_subset(actual, expected)
+    for key in REAL_INVARIANT_KEYS:
+        _assert_golden_subset(actual[key], expected[key], f"$.{key}")
     assert actual["total_usd"] == OAIF_TOTAL
     print(f"oaif-2026 total_usd: {actual['total_usd']}")

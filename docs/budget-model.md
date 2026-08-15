@@ -16,8 +16,10 @@ invents a funder limit and never recomputes your rates provider's
 numbers (see [the rates contract](rates-contract.md)).
 
 The current schema markers are `grantkit-menu/v1`, `grantkit-rates/v1`,
-and `grantkit-selection/v1`. GrantKit still accepts every v0 document. A
-v0 portfolio follows the v0.3 arithmetic exactly; all v1 fields are optional.
+and `grantkit-selection/v1`. GrantKit still accepts every v0 document, and a
+v0 portfolio follows the v0.3 arithmetic exactly. A document that uses a
+v1-only construct must declare the matching v1 marker; validation names both
+the construct and required marker.
 The schemas tolerate unknown keys so producers can carry extensions. Unknown
 keys are not guessed: use the documented spellings exactly, especially
 `overhead_included`, because a misspelling leaves its default (`false`) in
@@ -71,7 +73,7 @@ items:
     what: "One sentence on what this is."         # required
     evidence: "Machine-checkable done-evidence."  # required
     status: in-flight           # required: shipped|in-flight|planned
-    duration_months: 9          # optional integer
+    duration_months: 9          # optional non-negative integer; 0 is instant
     dependencies: []            # required list (may be empty);
                                 # ids must resolve within the menu
     revenue_unlock: "..."       # optional free text
@@ -176,9 +178,11 @@ kinds:
 
 Every parameter declares a `type` and a required `default`. Supported types
 are `number`, `integer`, `enum`, `boolean`, and `string`. Numeric definitions
-may set inclusive `min` and `max` bounds; enums list their allowed `values`.
-Every instance parameter must be declared and type-correct. String parameters
-are labels for `title_template`; forms cannot do arithmetic with them.
+may set inclusive `min` and `max` bounds. An omitted or null numeric `min`
+defaults to `0`; an omitted `max` is unbounded. Enums list their allowed
+`values`. Every instance parameter must be declared and type-correct. String
+parameters are labels for `title_template`; forms cannot do arithmetic with
+them.
 
 ### Derived parameters
 
@@ -372,11 +376,12 @@ revenue:
 
 `starts` is `start` or `completion` and defaults to `completion`. Item start
 is the selection line's `start_month`; completion is start plus resolved
-duration (one month when no duration is declared). `volume_per_year[0]` is
-the annual rate for the stream's first twelve months, index 1 for the next
-twelve, and so on. The last value persists for every later year. Revenue is
-projected through `horizon_months`, in periods measured from the selection's
-start.
+duration (one month when no duration is declared). A zero-duration item's
+completion is its start month, so completion-based revenue begins there.
+`volume_per_year[0]` is the annual rate for the stream's first twelve months,
+index 1 for the next twelve, and so on. The last value persists for every
+later year. Revenue is projected through `horizon_months`, in periods measured
+from the selection's start.
 
 When `ramp_months` is present, the stream's rate rises linearly from zero to
 full rate over that interval. The compiler integrates the ramp over continuous
@@ -407,7 +412,13 @@ Labor, units, contract, and flat item costs are spread uniformly over each
 line's `[start_month, start_month + duration_months)` interval. Unlike the
 selection total, recurring cost is a run rate: it is spread over the cost
 window only. A flat org-base block keeps the v0 arithmetic and is spread
-uniformly over the window for reporting.
+uniformly over the window for reporting. An explicit `duration_months: 0` is
+the compatibility exception: the item is instantaneous, and all of its
+one-time cost is assigned to the period containing `start_month`; on an annual
+boundary, that is the period beginning there. Org bases start at month zero. A
+roster entry without its own `months` and annualized non-personnel cost both
+use the zero duration and therefore contribute zero; recurring cost remains a
+window run rate.
 
 Scheduled work may extend beyond `window_months`. Those dollars remain in the
 later periods rather than disappearing, and `outside_window_usd` separately
@@ -504,10 +515,12 @@ live.
 ### The role-capacity gate
 
 A rate may declare `capacity_fte`. For each role and period, GrantKit sums
-incremental FTE and unscaled roster FTE across every `live` or `awarded`
-selection. When compiling a non-binding selection directly, that selection
-is added to the live/awarded set as a scenario. An unscoped portfolio check
-does not add every draft.
+incremental FTE across every `live` or `awarded` selection. An org-base
+item's unscaled roster FTE counts once even when several selections reference
+that same item: their fractions claim funding shares in one organization,
+not duplicate staff. Distinct org-base items count separately. When compiling
+a non-binding selection directly, that selection is added to the live/awarded
+set as a scenario. An unscoped portfolio check does not add every draft.
 
 `role_over_allocated` warns when demand is greater than
 `capacity_fte * 1.0000001`; the small relative tolerance keeps floating-point

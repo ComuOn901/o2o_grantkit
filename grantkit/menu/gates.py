@@ -301,8 +301,8 @@ def _resolved_menu_items(
         except _RESOLUTION_ERRORS as exc:
             # Schema gates normally report the cause.  A caller may also
             # hand us a valid-looking expression whose evaluated value is
-            # unusable (for example, a zero duration). Surface that at the
-            # gate boundary rather than allowing the compile command to
+            # unusable (for example, an overflowing derived value). Surface
+            # that at the gate boundary rather than allowing the compile to
             # traceback after validation.
             if findings is not None:
                 findings.append(
@@ -932,16 +932,41 @@ def _role_over_allocated_gate(
         )
         for index in range(period_count):
             contributions: list[tuple[str, float]] = []
+            base_demand_by_item: dict[str, float] = {}
+            base_references: dict[str, list[str]] = {}
             for selection_id in sorted(compiled):
-                periods = compiled[selection_id].periods
+                cost = compiled[selection_id]
+                periods = cost.periods
                 if index >= len(periods):
                     continue
                 period = periods[index]
-                demand = float(period["fte_by_role"].get(role, 0.0)) + float(
-                    period["base_fte_by_role"].get(role, 0.0)
+                incremental = float(period["fte_by_role"].get(role, 0.0))
+                if incremental > 0:
+                    contributions.append((selection_id, incremental))
+
+                base = float(period["base_fte_by_role"].get(role, 0.0))
+                base_item = cost.org_base_item
+                if base <= 0 or base_item is None:
+                    continue
+                # An org-base roster describes one organization. Funding
+                # shares from multiple selections do not clone its staff,
+                # so count each referenced base item only once. A maximum
+                # makes the result independent of selection ordering when
+                # final, partial-period lengths differ between selections.
+                base_demand_by_item[base_item] = max(
+                    base,
+                    base_demand_by_item.get(base_item, 0.0),
                 )
-                if demand > 0:
-                    contributions.append((selection_id, demand))
+                base_references.setdefault(base_item, []).append(selection_id)
+
+            for base_item in sorted(base_demand_by_item):
+                references = base_references[base_item]
+                shared = "shared " if len(references) > 1 else ""
+                label = (
+                    f"{' + '.join(references)} "
+                    f"({shared}org base '{base_item}')"
+                )
+                contributions.append((label, base_demand_by_item[base_item]))
             demand_total = sum(value for _, value in contributions)
             if demand_total <= capacity * CAPACITY_TOLERANCE_FACTOR:
                 continue

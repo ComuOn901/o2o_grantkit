@@ -290,7 +290,9 @@ def item_cost(
             "usd": usd,
         }
         labor += usd
-    duration = float(item.duration_months or 1.0)
+    duration = (
+        1.0 if item.duration_months is None else float(item.duration_months)
+    )
     roster_lines: list[dict[str, Any]] = []
     for roster in item.resourcing.roster:
         role = roster.role
@@ -585,7 +587,14 @@ def _period_extent(
                     for line in context.costed.roster_lines
                 ),
             )
-        extent = max(extent, float(context.line.start_month) + active)
+        start = float(context.line.start_month)
+        if active == 0 and start >= extent:
+            # Emit the annual bucket containing an instantaneous source. In
+            # particular, an event exactly on a boundary belongs to the
+            # period beginning there, not the preceding period.
+            extent = float((math.floor(start / 12.0) + 1) * 12)
+        else:
+            extent = max(extent, start + active)
     if base_context is not None and cost.org_base_fraction != 0:
         resolved, costed = base_context
         if costed.roster_lines or costed.non_personnel_usd:
@@ -631,7 +640,12 @@ def _phase_source(
     end: float,
 ) -> None:
     duration = end - start
-    if duration <= 0:
+    if duration == 0:
+        period = _instant_period(periods, start)
+        period["cost"][category] += amount
+        period["_bearing"] += bearing_amount
+        return
+    if duration < 0:
         return
     for period in periods:
         period_start = float(period["start_month"])
@@ -651,7 +665,13 @@ def _outside_source(
     overhead_rate: float,
 ) -> float:
     duration = end - start
-    if duration <= 0:
+    if duration == 0:
+        return (
+            0.0
+            if 0.0 <= start < window
+            else amount + overhead_rate * bearing_amount
+        )
+    if duration < 0:
         return 0.0
     outside_share = 1.0 - _overlap(start, end, 0.0, window) / duration
     return (
@@ -667,7 +687,17 @@ def _phase_incremental_fte(
     end: float,
 ) -> None:
     duration = end - start
-    if duration <= 0 or fte_months == 0:
+    if fte_months == 0:
+        return
+    if duration == 0:
+        period = _instant_period(periods, start)
+        months = float(period["months"])
+        if months:
+            period["fte_by_role"][role] = (
+                period["fte_by_role"].get(role, 0.0) + fte_months / months
+            )
+        return
+    if duration < 0:
         return
     for period in periods:
         period_start = float(period["start_month"])
@@ -679,6 +709,24 @@ def _phase_incremental_fte(
                 period["fte_by_role"].get(role, 0.0)
                 + fte_months * overlap / duration / months
             )
+
+
+def _instant_period(
+    periods: list[dict[str, Any]], start: float
+) -> dict[str, Any]:
+    """Return the emitted period containing an instantaneous source."""
+    for period in periods:
+        period_start = float(period["start_month"])
+        if start == period_start:
+            return period
+    for period in periods:
+        period_start = float(period["start_month"])
+        period_end = period_start + float(period["months"])
+        if period_start < start < period_end:
+            return period
+    # Selection validation guarantees at least one period. This fallback is
+    # for an event at the outer edge of a partial final bucket.
+    return periods[-1]
 
 
 def _phase_base_fte(
@@ -801,13 +849,14 @@ def _build_periods(
             - roster_bearing
             - non_personnel_bearing
         )
+        remainder_end = 0.0 if resolved.duration_months == 0 else window
         _phase_source(
             periods,
             "org_base",
             fraction * remainder,
             fraction * remainder_bearing,
             0.0,
-            window,
+            remainder_end,
         )
         for roster in costed.roster_lines:
             active = float(roster["months"])
@@ -837,7 +886,7 @@ def _build_periods(
                 role,
                 fraction * spend["fte_months"],
                 0.0,
-                window,
+                remainder_end,
             )
 
     for period in periods:

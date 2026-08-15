@@ -8,6 +8,7 @@ project dependency.
 
 from __future__ import annotations
 
+import math
 import random
 from pathlib import Path
 from typing import Any
@@ -1008,6 +1009,19 @@ def test_zero_fraction_keeps_line_but_removes_cost_and_staffing():
 # -- deterministic property-style phasing conservation ----------------
 
 
+def _uniform_spread_cost(
+    amount: float,
+    start: float,
+    duration: float,
+    period_start: float,
+    period_end: float,
+) -> float:
+    """Compute a test-only uniform allocation without engine helpers."""
+    source_end = start + duration
+    overlap = max(0.0, min(source_end, period_end) - max(start, period_start))
+    return amount * overlap / duration
+
+
 def _phasing_cases() -> list[tuple[int, int, float, int, int, float, bool]]:
     rng = random.Random(20260815)
     cases = []
@@ -1066,6 +1080,7 @@ def test_random_phasing_conserves_totals_and_categories(
         "duration_months": duration,
     }
     work = _item(f"work-{case_id}", kind="random-work", duration=None)
+    work.pop("resourcing")
     base = _item(
         f"base-{case_id}",
         item_type="org-base",
@@ -1098,25 +1113,59 @@ def test_random_phasing_conserves_totals_and_categories(
         selection,
     )
 
-    assert sum(p["cost"]["total"] for p in cost.periods) == pytest.approx(
-        cost.total_usd, abs=1e-6
-    )
-    expected = {
-        "labor": cost.labor_usd,
-        "units": cost.units_usd,
-        "contract": cost.contract_usd,
-        "flat": cost.flat_usd,
-        "recurring": cost.recurring_usd,
-        "org_base": cost.org_base_usd,
-        "overhead": cost.overhead_usd,
-    }
-    for category, target in expected.items():
-        assert sum(p["cost"][category] for p in cost.periods) == pytest.approx(
-            target, abs=1e-6
-        )
+    labor = fraction * 2.34567 / 12.0 * 120000.0
+    units = fraction * 7.89123 * 2.424
+    contract = fraction * 1234.56789
+    flat = fraction * 765.43219
+    recurring = fraction * 333.33333 * window / 12.0
+    org_base = 0.137 * 4321.09876
+    extent = max(float(window), float(horizon), start + duration)
+    assert len(cost.periods) == max(1, math.ceil(extent / 12.0))
+
     for index, period in enumerate(cost.periods):
+        period_start = float(index * 12)
+        period_end = min(float((index + 1) * 12), extent)
+        expected = {
+            "labor": _uniform_spread_cost(
+                labor, start, duration, period_start, period_end
+            ),
+            "units": _uniform_spread_cost(
+                units, start, duration, period_start, period_end
+            ),
+            "contract": _uniform_spread_cost(
+                contract, start, duration, period_start, period_end
+            ),
+            "flat": _uniform_spread_cost(
+                flat, start, duration, period_start, period_end
+            ),
+            "recurring": _uniform_spread_cost(
+                recurring, 0.0, float(window), period_start, period_end
+            ),
+            "org_base": _uniform_spread_cost(
+                org_base, 0.0, float(window), period_start, period_end
+            ),
+        }
+        overhead_bearing = (
+            expected["labor"] + expected["units"] + expected["recurring"]
+        )
+        if not overhead_included:
+            overhead_bearing += (
+                expected["contract"] + expected["flat"] + expected["org_base"]
+            )
+        expected["overhead"] = 0.07 * overhead_bearing
+
         assert period["index"] == index
         assert period["label"] == f"Y{index + 1}"
+        assert period["start_month"] == pytest.approx(period_start)
+        assert period["months"] == pytest.approx(period_end - period_start)
+        for category, expected_cost in expected.items():
+            assert period["cost"][category] == pytest.approx(
+                expected_cost, rel=0.0, abs=1e-6
+            )
         assert period["cost"]["total"] == pytest.approx(
-            sum(period["cost"][name] for name in expected), abs=1e-9
+            sum(expected.values()), rel=0.0, abs=1e-6
         )
+
+    assert sum(p["cost"]["total"] for p in cost.periods) == pytest.approx(
+        cost.total_usd, rel=0.0, abs=1e-6
+    )

@@ -877,6 +877,399 @@ def _validate_schema_key(
         )
 
 
+def _first_form_estimate_path(value: Any, path: str) -> Optional[str]:
+    """Find estimates at FORM scalar sites without scanning identifier keys."""
+    if isinstance(value, list):
+        for index, entry in enumerate(value):
+            found = _first_form_estimate_path(entry, f"{path}[{index}]")
+            if found is not None:
+                return found
+        return None
+    if not isinstance(value, dict):
+        return None
+    if set(value) & _ESTIMATE_KEYS:
+        return path
+    if isinstance(value.get("const"), dict):
+        return f"{path}.const"
+    per = value.get("per")
+    if isinstance(per, dict):
+        for param, coefficient in per.items():
+            if isinstance(coefficient, dict):
+                return f"{path}.per[{param!r}]"
+    by = value.get("by")
+    if isinstance(by, dict):
+        for param, choices in by.items():
+            if not isinstance(choices, dict):
+                continue
+            for choice, coefficient in choices.items():
+                if isinstance(coefficient, dict):
+                    return f"{path}.by[{param!r}][{choice!r}]"
+    return None
+
+
+def _first_resourcing_estimate_path(
+    resourcing: Any, path: str, *, parametric: bool
+) -> Optional[str]:
+    """Find the first estimate in concrete or FORM resourcing leaves."""
+    if not isinstance(resourcing, dict):
+        return None
+    mapping_fields = ("fte_months", "units") if parametric else ("fte_months",)
+    for field_name in mapping_fields:
+        values = resourcing.get(field_name)
+        if not isinstance(values, dict):
+            continue
+        for name, value in values.items():
+            value_path = f"{path}.{field_name}[{name!r}]"
+            if parametric:
+                found = _first_form_estimate_path(value, value_path)
+                if found is not None:
+                    return found
+            elif isinstance(value, dict):
+                return value_path
+    for field_name in (
+        "contract_usd",
+        "recurring_usd_per_year",
+        "amount_usd",
+        "non_personnel_usd_per_year",
+    ):
+        value = resourcing.get(field_name)
+        value_path = f"{path}.{field_name}"
+        if parametric:
+            found = _first_form_estimate_path(value, value_path)
+            if found is not None:
+                return found
+        elif isinstance(value, dict):
+            return value_path
+    return None
+
+
+def _first_revenue_estimate_path(
+    revenue: Any, path: str, *, parametric: bool
+) -> Optional[str]:
+    """Find the first estimate in explicit or parametric revenue."""
+    if not isinstance(revenue, list):
+        return None
+    for stream_index, stream in enumerate(revenue):
+        if not isinstance(stream, dict):
+            continue
+        stream_path = f"{path}[{stream_index}]"
+        price = stream.get("price_usd")
+        if parametric:
+            found = _first_form_estimate_path(
+                price, f"{stream_path}.price_usd"
+            )
+            if found is not None:
+                return found
+        elif isinstance(price, dict):
+            return f"{stream_path}.price_usd"
+        volume = stream.get("volume_per_year")
+        if not isinstance(volume, list):
+            continue
+        for year, amount in enumerate(volume):
+            amount_path = f"{stream_path}.volume_per_year[{year}]"
+            if parametric:
+                found = _first_form_estimate_path(amount, amount_path)
+                if found is not None:
+                    return found
+            elif isinstance(amount, dict):
+                return amount_path
+    return None
+
+
+def _first_menu_estimate_path(data: dict[str, Any]) -> Optional[str]:
+    """Find an estimate only at menu fields where one is meaningful."""
+    unit_costs = data.get("unit_costs")
+    if isinstance(unit_costs, dict):
+        for name, entry in unit_costs.items():
+            if isinstance(entry, dict) and isinstance(
+                entry.get("usd_per_unit"), dict
+            ):
+                return f"unit_costs[{name!r}].usd_per_unit"
+
+    kinds = data.get("kinds")
+    if isinstance(kinds, dict):
+        for name, kind in kinds.items():
+            if not isinstance(kind, dict):
+                continue
+            kind_path = f"kinds[{name!r}]"
+            found = _first_resourcing_estimate_path(
+                kind.get("resourcing"),
+                f"{kind_path}.resourcing",
+                parametric=True,
+            )
+            if found is not None:
+                return found
+            found = _first_form_estimate_path(
+                kind.get("duration_months"),
+                f"{kind_path}.duration_months",
+            )
+            if found is not None:
+                return found
+            found = _first_revenue_estimate_path(
+                kind.get("revenue"),
+                f"{kind_path}.revenue",
+                parametric=True,
+            )
+            if found is not None:
+                return found
+
+    items = data.get("items")
+    if not isinstance(items, list):
+        return None
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        item_path = f"items[{index}]"
+        found = _first_resourcing_estimate_path(
+            item.get("resourcing"),
+            f"{item_path}.resourcing",
+            parametric=False,
+        )
+        if found is not None:
+            return found
+        found = _first_revenue_estimate_path(
+            item.get("revenue"),
+            f"{item_path}.revenue",
+            parametric=False,
+        )
+        if found is not None:
+            return found
+    return None
+
+
+def _first_selection_estimate_path(data: dict[str, Any]) -> Optional[str]:
+    """Find estimates in selection-private instance override sites."""
+    lines = data.get("selections")
+    if not isinstance(lines, list):
+        return None
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict):
+            continue
+        instance = line.get("instance")
+        if not isinstance(instance, dict):
+            continue
+        instance_path = f"selections[{index}].instance"
+        found = _first_resourcing_estimate_path(
+            instance.get("resourcing"),
+            f"{instance_path}.resourcing",
+            parametric=False,
+        )
+        if found is not None:
+            return found
+        found = _first_revenue_estimate_path(
+            instance.get("revenue"),
+            f"{instance_path}.revenue",
+            parametric=False,
+        )
+        if found is not None:
+            return found
+    return None
+
+
+def _first_rates_estimate_path(data: dict[str, Any]) -> Optional[str]:
+    """Find an estimate only at rates fields where one is meaningful."""
+    roles = data.get("roles")
+    if not isinstance(roles, list):
+        return None
+    for index, role in enumerate(roles):
+        if not isinstance(role, dict):
+            continue
+        role_path = f"roles[{index}]"
+        for field_name in ("loaded_usd", "base_usd"):
+            if isinstance(role.get(field_name), dict):
+                return f"{role_path}.{field_name}"
+        components = role.get("components")
+        if isinstance(components, list):
+            for component_index, component in enumerate(components):
+                if isinstance(component, dict) and isinstance(
+                    component.get("amount_usd"), dict
+                ):
+                    return (
+                        f"{role_path}.components[{component_index}]."
+                        "amount_usd"
+                    )
+        benchmark = role.get("benchmark")
+        if isinstance(benchmark, dict) and isinstance(
+            benchmark.get("value_usd"), dict
+        ):
+            return f"{role_path}.benchmark.value_usd"
+    return None
+
+
+def _require_v1_construct(
+    errors: list[str],
+    seen: set[str],
+    *,
+    rule: str,
+    construct: str,
+    where: str,
+    required_schema: str,
+) -> None:
+    """Report one v1-only construct once for a legacy document."""
+    if construct in seen:
+        return
+    seen.add(construct)
+    _add_error(
+        errors,
+        rule,
+        f"{where} uses v1-only construct '{construct}'; set 'schema' to "
+        f"'{required_schema}'",
+    )
+
+
+def _validate_menu_schema_version(
+    data: dict[str, Any], errors: list[str]
+) -> None:
+    """Reject menu-v1 constructs mislabeled with the v0 marker."""
+    if data.get("schema") != MENU_SCHEMA_V0:
+        return
+    seen: set[str] = set()
+    for construct in ("kinds", "kind_presets"):
+        if construct in data:
+            _require_v1_construct(
+                errors,
+                seen,
+                rule="menu_invalid",
+                construct=construct,
+                where=construct,
+                required_schema=MENU_SCHEMA_V1,
+            )
+    raw_kinds = data.get("kinds")
+    if isinstance(raw_kinds, dict):
+        for kind_id, kind in raw_kinds.items():
+            if isinstance(kind, dict) and "revenue" in kind:
+                _require_v1_construct(
+                    errors,
+                    seen,
+                    rule="menu_invalid",
+                    construct="revenue",
+                    where=f"kinds[{kind_id!r}].revenue",
+                    required_schema=MENU_SCHEMA_V1,
+                )
+    items = data.get("items")
+    if isinstance(items, list):
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            where = f"items[{index}]"
+            for construct in ("kind", "params", "revenue"):
+                if construct in item:
+                    _require_v1_construct(
+                        errors,
+                        seen,
+                        rule="menu_invalid",
+                        construct=construct,
+                        where=f"{where}.{construct}",
+                        required_schema=MENU_SCHEMA_V1,
+                    )
+            resourcing = item.get("resourcing")
+            if isinstance(resourcing, dict):
+                for construct in ("roster", "non_personnel_usd_per_year"):
+                    if construct in resourcing:
+                        _require_v1_construct(
+                            errors,
+                            seen,
+                            rule="menu_invalid",
+                            construct=construct,
+                            where=f"{where}.resourcing.{construct}",
+                            required_schema=MENU_SCHEMA_V1,
+                        )
+    estimate_path = _first_menu_estimate_path(data)
+    if estimate_path is not None:
+        _require_v1_construct(
+            errors,
+            seen,
+            rule="menu_invalid",
+            construct="estimate",
+            where=estimate_path,
+            required_schema=MENU_SCHEMA_V1,
+        )
+
+
+def _validate_rates_schema_version(
+    data: dict[str, Any], errors: list[str]
+) -> None:
+    """Reject rates-v1 constructs mislabeled with the v0 marker."""
+    if data.get("schema") != RATES_SCHEMA_V0:
+        return
+    seen: set[str] = set()
+    roles = data.get("roles")
+    if isinstance(roles, list):
+        for index, role in enumerate(roles):
+            if isinstance(role, dict) and "capacity_fte" in role:
+                _require_v1_construct(
+                    errors,
+                    seen,
+                    rule="rates_invalid",
+                    construct="capacity_fte",
+                    where=f"roles[{index}].capacity_fte",
+                    required_schema=RATES_SCHEMA_V1,
+                )
+    estimate_path = _first_rates_estimate_path(data)
+    if estimate_path is not None:
+        _require_v1_construct(
+            errors,
+            seen,
+            rule="rates_invalid",
+            construct="estimate",
+            where=estimate_path,
+            required_schema=RATES_SCHEMA_V1,
+        )
+
+
+def _validate_selection_schema_version(
+    data: dict[str, Any], errors: list[str]
+) -> None:
+    """Reject selection-v1 constructs mislabeled with the v0 marker."""
+    if data.get("schema") != SELECTION_SCHEMA_V0:
+        return
+    seen: set[str] = set()
+    if "horizon_months" in data:
+        _require_v1_construct(
+            errors,
+            seen,
+            rule="selection_invalid",
+            construct="horizon_months",
+            where="horizon_months",
+            required_schema=SELECTION_SCHEMA_V1,
+        )
+    lines = data.get("selections")
+    if isinstance(lines, list):
+        for index, line in enumerate(lines):
+            if not isinstance(line, dict):
+                continue
+            for construct in ("start_month", "instance"):
+                if construct in line:
+                    _require_v1_construct(
+                        errors,
+                        seen,
+                        rule="selection_invalid",
+                        construct=construct,
+                        where=f"selections[{index}].{construct}",
+                        required_schema=SELECTION_SCHEMA_V1,
+                    )
+            instance = line.get("instance")
+            if isinstance(instance, dict) and "revenue" in instance:
+                _require_v1_construct(
+                    errors,
+                    seen,
+                    rule="selection_invalid",
+                    construct="revenue",
+                    where=f"selections[{index}].instance.revenue",
+                    required_schema=SELECTION_SCHEMA_V1,
+                )
+    estimate_path = _first_selection_estimate_path(data)
+    if estimate_path is not None:
+        _require_v1_construct(
+            errors,
+            seen,
+            rule="selection_invalid",
+            construct="estimate",
+            where=estimate_path,
+            required_schema=SELECTION_SCHEMA_V1,
+        )
+
+
 def _validate_cost_scalar(
     value: Any,
     where: str,
@@ -1045,6 +1438,8 @@ def _param_value_valid(value: Any, definition: dict[str, Any]) -> bool:
         return False
     if param_type in {"number", "integer"}:
         minimum = definition.get("min")
+        if minimum is None:
+            minimum = 0
         maximum = definition.get("max")
         if _is_number(minimum) and value < minimum:
             return False
@@ -1782,6 +2177,7 @@ def validate_menu(data: Any) -> list[str]:
     if not isinstance(data, dict):
         return ["menu must be a mapping/dict"]
     _validate_schema_key(data, ALLOWED_MENU_SCHEMAS, errors, "menu_invalid")
+    _validate_menu_schema_version(data, errors)
 
     currency = data.get("currency")
     if not _is_string(currency, nonempty=True):
@@ -1901,9 +2297,15 @@ def validate_menu(data: Any) -> list[str]:
                 f"{label} invalid status {status!r} "
                 f"(allowed: {sorted(VALID_ITEM_STATUSES)})"
             )
-        if not _is_int_or_none(item.get("duration_months")):
+        duration = item.get("duration_months")
+        if not _is_int_or_none(duration) or (
+            isinstance(duration, int)
+            and not isinstance(duration, bool)
+            and duration < 0
+        ):
             errors.append(
-                f"{label} 'duration_months' must be an integer or null"
+                f"{label} 'duration_months' must be a non-negative "
+                "integer or null"
             )
         dependencies = item.get("dependencies")
         if not isinstance(dependencies, list):
@@ -1937,6 +2339,7 @@ def validate_rates(data: Any) -> list[str]:
     if not isinstance(data, dict):
         return ["rates must be a mapping/dict"]
     _validate_schema_key(data, ALLOWED_RATES_SCHEMAS, errors, "rates_invalid")
+    _validate_rates_schema_version(data, errors)
 
     if not _is_string(data.get("provider"), nonempty=True):
         errors.append("missing required key: 'provider'")
@@ -2099,6 +2502,7 @@ def validate_selection(data: Any, menu: Any = None) -> list[str]:
     _validate_schema_key(
         data, ALLOWED_SELECTION_SCHEMAS, errors, "selection_invalid"
     )
+    _validate_selection_schema_version(data, errors)
 
     for key in ("id", "funder"):
         if not _is_string(data.get(key), nonempty=True):
@@ -2240,9 +2644,15 @@ def validate_selection(data: Any, menu: Any = None) -> list[str]:
                 )
         if "resourcing" in instance:
             _validate_resourcing(instance.get("resourcing"), iwhere, errors)
-        if not _is_int_or_none(instance.get("duration_months")):
+        duration = instance.get("duration_months")
+        if not _is_int_or_none(duration) or (
+            isinstance(duration, int)
+            and not isinstance(duration, bool)
+            and duration < 0
+        ):
             errors.append(
-                f"{iwhere} 'duration_months' must be an integer or null"
+                f"{iwhere} 'duration_months' must be a non-negative "
+                "integer or null"
             )
         dependencies = instance.get("dependencies")
         if dependencies is not None and not _is_string_list(dependencies):

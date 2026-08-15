@@ -168,6 +168,20 @@ def test_menu_item_duration_must_fit_numeric_model(portfolio_menu):
     assert any("duration_months" in e for e in validate_menu(portfolio_menu))
 
 
+@pytest.mark.parametrize("schema", ["grantkit-menu/v0", "grantkit-menu/v1"])
+def test_menu_item_zero_duration_is_valid_across_schema_versions(
+    portfolio_menu, schema
+):
+    portfolio_menu["schema"] = schema
+    portfolio_menu["items"][1]["duration_months"] = 0
+    assert validate_menu(portfolio_menu) == []
+
+
+def test_menu_item_negative_duration_is_rejected(portfolio_menu):
+    portfolio_menu["items"][1]["duration_months"] = -1
+    assert any("non-negative" in e for e in validate_menu(portfolio_menu))
+
+
 def test_menu_item_dependencies_required_list(portfolio_menu):
     del portfolio_menu["items"][1]["dependencies"]
     assert any("dependencies" in e for e in validate_menu(portfolio_menu))

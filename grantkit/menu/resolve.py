@@ -852,9 +852,9 @@ def resolve_item(
             duration_path,
         )
     )
-    if not math.isfinite(duration) or duration <= 0:
+    if not math.isfinite(duration) or duration < 0:
         raise ValueError(
-            f"{duration_path} must resolve to a finite number greater than 0"
+            f"{duration_path} must resolve to a finite non-negative number"
         )
 
     kind_dependencies = (
