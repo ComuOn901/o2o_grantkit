@@ -37,8 +37,11 @@ from ..packs import FunderPack
 from .engine import selection_cost
 from .loader import Portfolio
 from .money import format_money, format_percent, round_half_up
+from .resolve import ResolvedItem, resolve_item
 from .schema import (
+    SELECTION_SCHEMA_V1,
     Selection,
+    ValidationIssue,
     validate_menu,
     validate_rates,
     validate_selection,
@@ -57,6 +60,11 @@ LOAD_FACTOR_MAX = 2.0
 
 #: Components must sum to loaded within this many dollars.
 COMPONENTS_TOLERANCE_USD = 1.0
+
+#: Capacity comparisons allow a small relative float tolerance.
+CAPACITY_TOLERANCE_FACTOR = 1.0000001
+
+_RESOLUTION_ERRORS = (KeyError, TypeError, ValueError, OverflowError)
 
 
 def _contains_non_finite_float(value: Any) -> bool:
@@ -104,6 +112,7 @@ def run_gates(
     items += _fraction_gates(portfolio)
     items += _cofunding_gate(portfolio)
 
+    subject: Optional[Selection] = None
     if selection_id is not None:
         target = portfolio.get_selection(selection_id)
         if target is None:
@@ -119,11 +128,13 @@ def run_gates(
                 )
             )
             return items
+        subject = target
         scope = [target]
     else:
         scope = list(portfolio.selections)
     for selection in scope:
         items += _selection_gates(portfolio, selection, pack)
+    items += _role_over_allocated_gate(portfolio, subject)
     return items
 
 
@@ -136,7 +147,7 @@ def _schema_gates(portfolio: Portfolio) -> list[CheckItem]:
         out.append(
             CheckItem(
                 level="error",
-                rule="menu_invalid",
+                rule=_validation_rule(message, "menu_invalid"),
                 message=f"menu.yaml: {message}",
             )
         )
@@ -144,7 +155,7 @@ def _schema_gates(portfolio: Portfolio) -> list[CheckItem]:
         out.append(
             CheckItem(
                 level="error",
-                rule="rates_invalid",
+                rule=_validation_rule(message, "rates_invalid"),
                 message=f"rates.yaml: {message}",
             )
         )
@@ -153,11 +164,11 @@ def _schema_gates(portfolio: Portfolio) -> list[CheckItem]:
         portfolio.selections_data, portfolio.selections
     ):
         sid = selection.id or "(unnamed)"
-        for message in validate_selection(data):
+        for message in validate_selection(data, portfolio):
             out.append(
                 CheckItem(
                     level="error",
-                    rule="selection_invalid",
+                    rule=_validation_rule(message, "selection_invalid"),
                     message=f"selection '{sid}': {message}",
                     section=selection.id or None,
                 )
@@ -197,6 +208,13 @@ def _schema_gates(portfolio: Portfolio) -> list[CheckItem]:
     return out
 
 
+def _validation_rule(message: str, fallback: str) -> str:
+    """Use a v1 issue's precise rule without changing legacy strings."""
+    if isinstance(message, ValidationIssue):
+        return message.rule
+    return fallback
+
+
 # -- 2. menu / rates integrity ------------------------------------------
 
 
@@ -206,9 +224,13 @@ def _menu_gates(portfolio: Portfolio) -> list[CheckItem]:
     known_roles = set(portfolio.rates.roles_by_name)
     known_items = set(menu.items_by_id)
     provider = portfolio.rates.provider or "rates.yaml"
+    resolved_items = _resolved_menu_items(portfolio, out)
 
     for item in menu.items:
-        for role in item.resourcing.fte_months:
+        resolved = resolved_items.get(item.id)
+        if resolved is None:
+            continue
+        for role in resolved.resourcing.fte_months:
             if role not in known_roles:
                 out.append(
                     CheckItem(
@@ -221,7 +243,20 @@ def _menu_gates(portfolio: Portfolio) -> list[CheckItem]:
                         ),
                     )
                 )
-        for unit in item.resourcing.units:
+        for roster in resolved.resourcing.roster:
+            if roster.role not in known_roles:
+                out.append(
+                    CheckItem(
+                        level="error",
+                        rule="unknown_role",
+                        message=(
+                            f"Item '{item.id}' roster references role "
+                            f"'{roster.role}', which is not present in "
+                            f"the rates ({provider})."
+                        ),
+                    )
+                )
+        for unit in resolved.resourcing.units:
             if unit not in menu.unit_costs:
                 out.append(
                     CheckItem(
@@ -234,7 +269,7 @@ def _menu_gates(portfolio: Portfolio) -> list[CheckItem]:
                         ),
                     )
                 )
-        for dep in item.dependencies:
+        for dep in resolved.dependencies:
             if dep not in known_items:
                 out.append(
                     CheckItem(
@@ -246,20 +281,57 @@ def _menu_gates(portfolio: Portfolio) -> list[CheckItem]:
                         ),
                     )
                 )
-    out += _cycle_gate(portfolio)
+    out += _cycle_gate(portfolio, resolved_items)
     return out
 
 
-def _cycle_gate(portfolio: Portfolio) -> list[CheckItem]:
+def _resolved_menu_items(
+    portfolio: Portfolio,
+    findings: Optional[list[CheckItem]] = None,
+) -> dict[str, ResolvedItem]:
+    """Resolve menu items defensively for structural and advisory gates."""
+    result: dict[str, ResolvedItem] = {}
+    for item in portfolio.menu.items:
+        try:
+            result[item.id] = resolve_item(
+                item,
+                portfolio.menu.kinds,
+                path=f"menu.items.{item.id}",
+            )
+        except _RESOLUTION_ERRORS as exc:
+            # Schema gates normally report the cause.  A caller may also
+            # hand us a valid-looking expression whose evaluated value is
+            # unusable (for example, a zero duration). Surface that at the
+            # gate boundary rather than allowing the compile command to
+            # traceback after validation.
+            if findings is not None:
+                findings.append(
+                    CheckItem(
+                        level="error",
+                        rule=(
+                            "kind_form_invalid"
+                            if item.kind is not None
+                            else "menu_invalid"
+                        ),
+                        message=(
+                            f"Item '{item.id}' could not be resolved: {exc}."
+                        ),
+                    )
+                )
+            continue
+    return result
+
+
+def _cycle_gate(
+    portfolio: Portfolio, known: dict[str, ResolvedItem]
+) -> list[CheckItem]:
     """Detect dependency cycles with an iterative DFS in menu order."""
-    menu = portfolio.menu
-    known = menu.items_by_id
     out: list[CheckItem] = []
     done: set[str] = set()
     reported: set[frozenset[str]] = set()
 
-    for item in menu.items:
-        if item.id in done:
+    for item in portfolio.menu.items:
+        if item.id in done or item.id not in known:
             continue
         active: list[str] = []
         active_index: dict[str, int] = {}
@@ -372,12 +444,16 @@ def _fraction_gates(portfolio: Portfolio) -> list[CheckItem]:
         sid = selection.id
         for line in selection.selections:
             if line.fraction < 0 or line.fraction > 1:
+                if line.instance is not None:
+                    subject = f"instance '{line.instance.id}'"
+                else:
+                    subject = f"item '{line.item}'"
                 out.append(
                     CheckItem(
                         level="error",
                         rule="fraction_out_of_range",
                         message=(
-                            f"Selection '{sid}' item '{line.item}' fraction "
+                            f"Selection '{sid}' {subject} fraction "
                             f"{line.fraction!r} is outside [0, 1]."
                         ),
                         section=sid,
@@ -407,6 +483,8 @@ def _cofunding_gate(portfolio: Portfolio) -> list[CheckItem]:
         if selection.status not in BINDING_STATUSES:
             continue
         for line in selection.selections:
+            if line.instance is not None:
+                continue
             contributions.setdefault(line.item, []).append(
                 (selection.id, "", line.fraction)
             )
@@ -449,10 +527,53 @@ def _selection_gates(
     menu = portfolio.menu
     known_items = menu.items_by_id
     sid = selection.id
+    resolved_menu = _resolved_menu_items(portfolio)
 
     seen: set[str] = set()
     duplicates: set[str] = set()
+    seen_instances: set[str] = set()
+    resolved_instances: dict[str, ResolvedItem] = {}
     for line in selection.selections:
+        if line.instance is not None:
+            instance = line.instance
+            instance_id = instance.id
+            if instance_id in known_items or instance_id in seen_instances:
+                out.append(
+                    CheckItem(
+                        level="error",
+                        rule="instance_id_collision",
+                        message=(
+                            f"Selection '{sid}' instance id "
+                            f"'{instance_id}' repeats or collides with a "
+                            "menu item id."
+                        ),
+                        section=sid,
+                    )
+                )
+                continue
+            seen_instances.add(instance_id)
+            try:
+                resolved_instances[instance_id] = resolve_item(
+                    instance,
+                    menu.kinds,
+                    path=f"selection.{sid}.instances.{instance_id}",
+                )
+            except _RESOLUTION_ERRORS as exc:
+                # Precise schema findings normally report this.  Keep the
+                # integrity layer safe for manually-mutated portfolios.
+                out.append(
+                    CheckItem(
+                        level="error",
+                        rule="kind_form_invalid",
+                        message=(
+                            f"Selection '{sid}' instance '{instance_id}' "
+                            f"could not be resolved: {exc}."
+                        ),
+                        section=sid,
+                    )
+                )
+                continue
+            continue
         if line.item not in known_items:
             out.append(
                 CheckItem(
@@ -481,6 +602,17 @@ def _selection_gates(
             )
         )
 
+    known_dependency_ids = set(known_items) | set(resolved_instances)
+    for instance_id, resolved in resolved_instances.items():
+        out += _resolved_instance_gates(
+            portfolio,
+            selection,
+            instance_id,
+            resolved,
+            known_dependency_ids,
+        )
+    out += _instance_cycle_gate(selection, resolved_instances)
+
     if selection.org_base is not None:
         base_id = selection.org_base.item
         if base_id not in known_items:
@@ -495,27 +627,35 @@ def _selection_gates(
                     section=sid,
                 )
             )
-        elif known_items[base_id].type != "org-base":
+        elif (
+            base_id in resolved_menu
+            and resolved_menu[base_id].type != "org-base"
+        ):
             out.append(
                 CheckItem(
                     level="error",
                     rule="org_base_type",
                     message=(
                         f"Selection '{sid}' org_base item '{base_id}' "
-                        f"has type '{known_items[base_id].type}', "
+                        f"has type '{resolved_menu[base_id].type}', "
                         f"expected 'org-base'."
                     ),
                     section=sid,
                 )
             )
-    out += _unfunded_dependency_gate(portfolio, selection)
+    out += _unfunded_dependency_gate(
+        portfolio,
+        selection,
+        resolved_menu,
+        resolved_instances,
+    )
 
     # Compile-dependent gates only make sense when references resolve.
     if any(item.level == "error" for item in out):
         return out
     try:
         cost = selection_cost(selection, portfolio)
-    except KeyError:  # pragma: no cover - guarded above
+    except (KeyError, TypeError, ValueError):
         return out
     except OverflowError:
         out.append(_non_finite_finding(sid))
@@ -541,12 +681,154 @@ def _selection_gates(
                 section=sid,
             )
         )
+    if (
+        selection.schema == SELECTION_SCHEMA_V1
+        and cost.outside_window_usd > 1.0
+    ):
+        out.append(
+            CheckItem(
+                level="warning",
+                rule="phase_outside_window",
+                message=(
+                    f"Selection '{sid}' phases "
+                    f"{format_money(cost.outside_window_usd, currency)} "
+                    f"outside its {selection.window_months}-month window; "
+                    "the amount remains included in the compiled total."
+                ),
+                section=sid,
+            )
+        )
     out += _pack_cap_gates(selection, cost.total_usd, currency, pack)
     return out
 
 
+def _resolved_instance_gates(
+    portfolio: Portfolio,
+    selection: Selection,
+    instance_id: str,
+    resolved: ResolvedItem,
+    known_dependency_ids: set[str],
+) -> list[CheckItem]:
+    """Check concrete references contributed by one inline instance."""
+    out: list[CheckItem] = []
+    sid = selection.id
+    provider = portfolio.rates.provider or "rates.yaml"
+    known_roles = set(portfolio.rates.roles_by_name)
+    for role in resolved.resourcing.fte_months:
+        if role not in known_roles:
+            out.append(
+                CheckItem(
+                    level="error",
+                    rule="unknown_role",
+                    message=(
+                        f"Selection '{sid}' instance '{instance_id}' "
+                        f"resourcing references role '{role}', which is "
+                        f"not present in the rates ({provider})."
+                    ),
+                    section=sid,
+                )
+            )
+    for roster in resolved.resourcing.roster:
+        if roster.role not in known_roles:
+            out.append(
+                CheckItem(
+                    level="error",
+                    rule="unknown_role",
+                    message=(
+                        f"Selection '{sid}' instance '{instance_id}' "
+                        f"roster references role '{roster.role}', which is "
+                        f"not present in the rates ({provider})."
+                    ),
+                    section=sid,
+                )
+            )
+    for unit in resolved.resourcing.units:
+        if unit not in portfolio.menu.unit_costs:
+            out.append(
+                CheckItem(
+                    level="error",
+                    rule="unknown_unit",
+                    message=(
+                        f"Selection '{sid}' instance '{instance_id}' "
+                        f"references unit '{unit}', which is not present "
+                        "in the menu unit_costs."
+                    ),
+                    section=sid,
+                )
+            )
+    for dep in resolved.dependencies:
+        if dep not in known_dependency_ids:
+            out.append(
+                CheckItem(
+                    level="error",
+                    rule="dependency_unresolved",
+                    message=(
+                        f"Selection '{sid}' instance '{instance_id}' "
+                        f"depends on unknown item '{dep}'."
+                    ),
+                    section=sid,
+                )
+            )
+    return out
+
+
+def _instance_cycle_gate(
+    selection: Selection,
+    instances: dict[str, ResolvedItem],
+) -> list[CheckItem]:
+    """Detect cycles among selection-private inline instances."""
+    out: list[CheckItem] = []
+    done: set[str] = set()
+    reported: set[frozenset[str]] = set()
+
+    for line in selection.selections:
+        if line.instance is None:
+            continue
+        root = line.instance.id
+        if root in done or root not in instances:
+            continue
+        active: list[str] = []
+        active_index: dict[str, int] = {}
+        stack: list[tuple[str, bool]] = [(root, False)]
+        while stack:
+            item_id, exiting = stack.pop()
+            if exiting:
+                active.pop()
+                active_index.pop(item_id)
+                done.add(item_id)
+                continue
+            if item_id in done:
+                continue
+            if item_id in active_index:
+                cycle = active[active_index[item_id] :] + [item_id]
+                key = frozenset(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    out.append(
+                        CheckItem(
+                            level="error",
+                            rule="dependency_cycle",
+                            message=(
+                                "Dependency cycle: " + " -> ".join(cycle) + "."
+                            ),
+                            section=selection.id,
+                        )
+                    )
+                continue
+            active_index[item_id] = len(active)
+            active.append(item_id)
+            stack.append((item_id, True))
+            for dep in reversed(instances[item_id].dependencies):
+                if dep in instances:
+                    stack.append((dep, False))
+    return out
+
+
 def _unfunded_dependency_gate(
-    portfolio: Portfolio, selection: Selection
+    portfolio: Portfolio,
+    selection: Selection,
+    resolved_menu: dict[str, ResolvedItem],
+    resolved_instances: dict[str, ResolvedItem],
 ) -> list[CheckItem]:
     """Warn when a funded item's dependency has no funding anywhere.
 
@@ -554,18 +836,32 @@ def _unfunded_dependency_gate(
     in-flight, when any live/awarded selection funds it (fraction > 0),
     or when this selection funds it itself.
     """
-    known_items = portfolio.menu.items_by_id
     funded: set[str] = set()
     for other in portfolio.selections:
         if other.status in BINDING_STATUSES or other.id == selection.id:
             funded.update(
-                line.item for line in other.selections if line.fraction > 0
+                line.item
+                for line in other.selections
+                if line.instance is None and line.fraction > 0
             )
             if other.org_base is not None and other.org_base.fraction > 0:
                 funded.add(other.org_base.item)
+    funded.update(
+        line.instance.id
+        for line in selection.selections
+        if line.instance is not None and line.fraction > 0
+    )
 
     out: list[CheckItem] = []
-    claims = [(line.item, line.fraction) for line in selection.selections]
+    known_items = dict(resolved_menu)
+    known_items.update(resolved_instances)
+    claims = [
+        (
+            line.instance.id if line.instance is not None else line.item,
+            line.fraction,
+        )
+        for line in selection.selections
+    ]
     if selection.org_base is not None:
         claims.append((selection.org_base.item, selection.org_base.fraction))
     for item_id, fraction in claims:
@@ -591,6 +887,78 @@ def _unfunded_dependency_gate(
                         f"assumes work nobody has funded."
                     ),
                     section=selection.id,
+                )
+            )
+    return out
+
+
+def _role_over_allocated_gate(
+    portfolio: Portfolio, subject: Optional[Selection]
+) -> list[CheckItem]:
+    """Warn when relative-year staffing exceeds a declared role capacity."""
+    capacities = {
+        role.role: role.capacity_fte
+        for role in portfolio.rates.roles
+        if role.capacity_fte is not None
+    }
+    if not capacities:
+        return []
+
+    active = [
+        selection
+        for selection in portfolio.selections
+        if selection.status in BINDING_STATUSES
+    ]
+    if (
+        subject is not None
+        and subject.status not in BINDING_STATUSES
+        and all(selection.id != subject.id for selection in active)
+    ):
+        active.append(subject)
+
+    compiled: dict[str, Any] = {}
+    for selection in sorted(active, key=lambda entry: entry.id):
+        try:
+            compiled[selection.id] = selection_cost(selection, portfolio)
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            # Referential/schema findings carry the actionable error.
+            continue
+
+    out: list[CheckItem] = []
+    for role in sorted(capacities):
+        capacity = float(capacities[role] or 0.0)
+        period_count = max(
+            (len(cost.periods) for cost in compiled.values()), default=0
+        )
+        for index in range(period_count):
+            contributions: list[tuple[str, float]] = []
+            for selection_id in sorted(compiled):
+                periods = compiled[selection_id].periods
+                if index >= len(periods):
+                    continue
+                period = periods[index]
+                demand = float(period["fte_by_role"].get(role, 0.0)) + float(
+                    period["base_fte_by_role"].get(role, 0.0)
+                )
+                if demand > 0:
+                    contributions.append((selection_id, demand))
+            demand_total = sum(value for _, value in contributions)
+            if demand_total <= capacity * CAPACITY_TOLERANCE_FACTOR:
+                continue
+            detail = ", ".join(
+                f"{selection_id} {demand:g} FTE"
+                for selection_id, demand in contributions
+            )
+            out.append(
+                CheckItem(
+                    level="warning",
+                    rule="role_over_allocated",
+                    message=(
+                        f"Role '{role}' in Y{index + 1} demands "
+                        f"{demand_total:g} FTE versus capacity "
+                        f"{capacity:g} FTE ({detail})."
+                    ),
+                    section=subject.id if subject is not None else None,
                 )
             )
     return out
