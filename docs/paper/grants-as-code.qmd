@@ -25,9 +25,11 @@ abstract: >
   anti-overlap and anti-double-charge principles are longstanding.
   Funder-as-view is novel as a mechanism: named ancestors copy estimates or
   text, or share organizational profiles, but do not constrain proposals as
-  fractional views over a priced substrate. The proposed funder-facing
-  configurator is novel, with the thinnest neighbor set of the six claims,
-  but is not implemented in 0.3 and its adoption is untested. Budget
+  fractional views over a priced substrate. The funder-facing
+  configurator is novel, with the thinnest neighbor set of the six claims;
+  it is implemented — a parametric 0.4 review branch plus a
+  conformance-tested organizational configurator — and its funder-facing
+  adoption is untested. Budget
   compilation and rule-derived rates are partially anticipated — rate-table
   engines and payroll calculators exist — and survive only in their precise
   forms. Validation already runs at scale in NIH ASSIST; the contribution
@@ -826,11 +828,65 @@ time before publication.
 Target fit is 49% of the synthetic USD 500,000 target. This table is static
 in the present paper source: rendering the paper does not rerun the command.
 It exercises compilation over a synthetic rates file, not the private
-reference provider's computation (@sec-availability). The proposed
-configurator (C6) would be a surface over the same compiled objects — presets
-and toggles over compiled selections — but is not part of the current 0.3
-review branch. The scenario pressure-testing in @sec-case ran by recompiling
-the model, not through a funder-facing interface.
+reference provider's computation (@sec-availability).
+
+## The parametric layer and the configurator
+
+<!-- Reconciled 2026-08-15 against grantkit feat/parametric-model (the 0.4
+review branch; 1,058 tests) and the organization's configurator branch
+(TypeScript engine mirror + Budget surface; 44 conformance tests incl. a
+synthetic roster fixture). Cross-family review applied on both; re-verify
+branch refs at publication. -->
+
+A second review branch, for 0.4, makes the menu parametric so a budget can
+be compiled for a package that does not yet exist as menu items. A *kind* is
+an item template: bounded parameters (each with a minimum, maximum, and
+default — the adjudicated bounds a configurator exposes), derived
+parameters, and cost forms that are deliberately linear — a constant, plus
+per-parameter coefficients, plus enum-keyed terms, with condition gates;
+lists of forms sum. Named presets bundle starting parameters. A selection
+may then carry an *inline instance* — one program, certified, in 25
+jurisdictions — priced from a kind without touching the menu. Any cost
+parameter may be written as an estimate object carrying a central value with
+optional low/high bounds, a basis from the same computed/configured/assumed
+vocabulary, and a source; 0.4 compiles the central value and passes the
+bounds through the compiled JSON, so uncertainty propagation can attach
+later without a schema change. Items may declare revenue streams — a unit
+price and a volume-by-year vector, starting at completion or start, with an
+optional ramp — which compile per period over a horizon and are reported
+both as *enabled* (the full stream, for any funded line) and *attributed*
+(scaled by the line's fraction), never silently netted. Compilation is also
+time-phased: per-period cost with a tested conservation invariant (the
+periods sum to the totals), staffing as FTE by role by period, and an
+optional per-role capacity in the rates file that turns over-allocation of
+people across live applications into a build warning — the staffing analogue
+of the co-funding gate. Two machine outputs — a compile of every selection
+and a normalized model bundle, both byte-stable across runs — serve as the
+conformance oracle for mirror implementations.
+
+The configurator (C6) is built on exactly that surface: a browser
+application in the organization's private dashboard whose TypeScript engine
+mirrors the Python engine and is conformance-tested against the exported
+vectors — every shared numeric value within 1e-6 across the saved
+selections and synthetic fixtures, including a roster fixture added after a
+cross-family review found a latent divergence conformance alone could not
+see. The interface is a package builder over the same menu and rates:
+fractional item selection with declared-not-billed zeros, bounded parametric
+instances, an org-base share, window, horizon, and target; live tiles,
+staffing and revenue panels with an assumption badge wherever a figure's
+basis is assumed; and a gates panel that raises the same rule identifiers as
+the engine — in a live exercise, over-allocating a shared item named both
+offending selections, and a parametric 25-jurisdiction package tripped the
+capacity warning with a per-selection breakdown. A selection built in the
+browser exports as a selection document that recompiles identically under
+`grantkit budget`, and the organization's CI regenerates the model bundle
+and vectors from a pinned grantkit and fails on drift, so the interface a
+funder sees and the numbers the organization plans by cannot diverge
+unnoticed. What remains untested is adoption: no funder has yet driven it
+(@sec-limits).
+
+The scenario pressure-testing in @sec-case predates the configurator: it ran
+by recompiling the model, not through the funder-facing interface.
 
 # Case study {#sec-case}
 
@@ -937,16 +993,20 @@ empirical questions.
 
 # Availability {#sec-availability}
 
-<!-- PUBLICATION GATE (2026-08-15): release grantkit 0.3 to PyPI before
-submission, then change the future-tense paragraph below. eggnest-employer is
-PRIVATE today: publish it or retain/reword every private-provider caveat.
-Organization data repositories remain private. The synthetic fixture lives
-in the review repository's tests, not in the current 0.2.x wheel; do not call
-it packaged unless 0.3 packaging changes. -->
+<!-- PUBLICATION GATE (2026-08-15): release grantkit 0.3 (and decide whether
+0.4 rides along) to PyPI before submission, then change the future-tense
+paragraph below. eggnest-employer is PRIVATE today: publish it or
+retain/reword every private-provider caveat. Organization data repositories
+remain private. The synthetic fixture lives in the review repository's
+tests, not in the current 0.2.x wheel; do not call it packaged unless 0.3
+packaging changes. The parametric-layer subsection in @sec-pipeline cites
+review-branch state — re-verify branch refs and test counts at
+publication. -->
 
 grantkit 0.2.x is available on PyPI today under the MIT license. The menu,
 rates, and selection schemas and the budget engine described here are
-implemented on the review branch for the companion 0.3 release; they are not
+implemented on the review branch for the companion 0.3 release, and the
+parametric layer of @sec-pipeline on a stacked 0.4 review branch; neither is
 in the current PyPI release. The review repository's test suite contains the
 synthetic fixture used above, but the current 0.2.x PyPI distribution does not
 ship that fixture. The reference rates provider, eggnest-employer, is not yet
