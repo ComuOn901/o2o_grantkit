@@ -852,7 +852,7 @@ changed rate or assumption regenerates all four together; fee-inclusive
 org-cost blocks from that model became the menu's org-base items, which
 selections claim fractionally. The ad-hoc pricer's first pass on a $2 million
 concept note printed 134% of target; the typed compilation printed
-$2,578,998.57, or 129.0% — exposing a $99,750 fee double-application, about
+$2,578,998.57, or 129% — exposing a $99,750 fee double-application, about
 five percentage points, and a real roughly 29-point overshoot, both before
 submission. The remaining scope is a trim decision in the organization's
 repository. The model also represented the bottom and top of a three-level
