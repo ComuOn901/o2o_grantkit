@@ -287,17 +287,20 @@ def selection_cost(
         cost.flat_usd += f * costed.flat_usd
         cost.recurring_usd += recurring
         overhead_base += bearing
-        for role, spend in costed.labor_by_role.items():
-            entry = cost.personnel.setdefault(
-                role,
-                {
-                    "fte_months": 0.0,
-                    "loaded_usd": rates.roles_by_name[role].loaded_usd,
-                    "usd": 0.0,
-                },
-            )
-            entry["fte_months"] += f * spend["fte_months"]
-            entry["usd"] += f * spend["usd"]
+        # Explicit-zero lines are declarations; they stay in the item
+        # list but add no personnel rows.
+        if f > 0:
+            for role, spend in costed.labor_by_role.items():
+                entry = cost.personnel.setdefault(
+                    role,
+                    {
+                        "fte_months": 0.0,
+                        "loaded_usd": rates.roles_by_name[role].loaded_usd,
+                        "usd": 0.0,
+                    },
+                )
+                entry["fte_months"] += f * spend["fte_months"]
+                entry["usd"] += f * spend["usd"]
 
     if selection.org_base is not None:
         base_id = selection.org_base.item
