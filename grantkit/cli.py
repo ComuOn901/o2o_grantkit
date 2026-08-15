@@ -1,12 +1,13 @@
 """GrantKit command-line interface.
 
-Five verbs, one engine:
+Six verbs, one engine:
 
 * ``grantkit init``   — scaffold a grant project (optionally from a funder pack)
 * ``grantkit check``  — lint the proposal (the linter)
 * ``grantkit build``  — compile responses into one document (the compiler)
 * ``grantkit review`` — emit a review packet for an AI agent
 * ``grantkit status`` — completion, word counts, deadline countdown
+* ``grantkit budget`` — compile a portfolio selection into a budget
 
 The engine is stateless and local-first: it reads files, writes files, and
 makes no network or AI calls (except opt-in link checking under
@@ -31,6 +32,16 @@ from .core.project import GrantProject
 from .core.review import build_review
 from .core.scaffold import ScaffoldError, init_project
 from .core.status import build_status, days_until_deadline, write_status
+from .menu import (
+    Portfolio,
+    PortfolioError,
+    load_portfolio,
+    run_gates,
+    selection_cost,
+)
+from .menu.render import budget_json, budget_markdown, print_budget
+from .menu.schema import Selection
+from .packs import FunderPack
 
 console = Console()
 err_console = Console(stderr=True)
@@ -292,6 +303,166 @@ def _print_status(project: GrantProject) -> None:
         f"{project.sections_complete}/{project.sections_total} sections, "
         f"{project.total_words:,} words."
     )
+
+
+# -- budget -------------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--selection",
+    "selection_id",
+    default=None,
+    help=(
+        "Selection id to compile (required for multi-selection "
+        "portfolios unless the path is a grant project bound to one)."
+    ),
+)
+@click.option(
+    "--check",
+    "check_only",
+    is_flag=True,
+    help=(
+        "Run the integrity gates only; exit 1 on errors (2 on an "
+        "unreadable portfolio)."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the full structured compilation (or gate findings) as JSON.",
+)
+@click.option(
+    "--output",
+    "output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the markdown budget document to a file.",
+)
+@click.option(
+    "--narrative",
+    is_flag=True,
+    help=(
+        "Include the narrative skeleton in the markdown output (without "
+        "--output, prints the markdown document to stdout)."
+    ),
+)
+@PATH_ARG
+def budget(
+    selection_id: Optional[str],
+    check_only: bool,
+    as_json: bool,
+    output: Optional[Path],
+    narrative: bool,
+    path: Path,
+) -> None:
+    """Compile a portfolio selection into a budget (menu x rates).
+
+    PATH is a portfolio directory (menu.yaml + rates.yaml + selections/)
+    or a grant project whose grant.yaml binds one via ``budget_model:``.
+    """
+    portfolio, selection_id, pack = _load_portfolio_target(path, selection_id)
+
+    if check_only:
+        result = CheckResult(items=run_gates(portfolio, selection_id, pack))
+        if as_json:
+            sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")
+        else:
+            _print_checks(result)
+        raise SystemExit(1 if result.failed() else 0)
+
+    selection = _resolve_selection(portfolio, selection_id)
+    result = CheckResult(items=run_gates(portfolio, selection.id, pack))
+    if result.errors:
+        _print_checks(result)
+        err_console.print(
+            "[red]Cannot compile: fix the errors above (or run "
+            "budget --check).[/red]"
+        )
+        raise SystemExit(1)
+    for item in result.items:
+        err_console.print(
+            f"[yellow]warning[/yellow] {item.rule}: {item.message}"
+        )
+
+    cost = selection_cost(selection, portfolio)
+    if output:
+        payload = budget_markdown(
+            portfolio, selection, cost, narrative=narrative
+        )
+        Path(output).write_text(payload, encoding="utf-8")
+        console.print(f"[green]Wrote budget document to {output}[/green]")
+    if as_json:
+        payload_json = budget_json(portfolio, selection, cost)
+        sys.stdout.write(json.dumps(payload_json, indent=2) + "\n")
+    elif narrative and not output:
+        sys.stdout.write(
+            budget_markdown(portfolio, selection, cost, narrative=True)
+        )
+    elif not output:
+        print_budget(console, portfolio, selection, cost)
+
+
+def _load_portfolio_target(
+    path: Path, selection_id: Optional[str]
+) -> tuple[Portfolio, Optional[str], Optional[FunderPack]]:
+    """Resolve PATH to (portfolio, selection id, pack).
+
+    PATH may be a portfolio directory or a grant project bound to one
+    via ``budget_model:``. Exits 2 when neither is readable.
+    """
+    pack = None
+    portfolio_dir = Path(path)
+    if (Path(path) / "grant.yaml").exists():
+        project = GrantProject(Path(path))
+        binding = project.budget_model
+        if not binding or not binding.get("portfolio"):
+            err_console.print(
+                f"[red]{project.grant_yaml_path} has no budget_model "
+                "binding.[/red]\nAdd one:\n\n"
+                "  budget_model:\n"
+                "    portfolio: ../org-portfolio\n"
+                "    selection: my-proposal\n\n"
+                "or point grantkit budget at a portfolio directory."
+            )
+            raise SystemExit(2)
+        portfolio_dir = (project.root / str(binding["portfolio"])).resolve()
+        if selection_id is None:
+            bound = binding.get("selection")
+            selection_id = str(bound) if bound is not None else None
+        pack = project.pack
+    try:
+        portfolio = load_portfolio(portfolio_dir)
+    except PortfolioError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise SystemExit(2)
+    return portfolio, selection_id, pack
+
+
+def _resolve_selection(
+    portfolio: Portfolio, selection_id: Optional[str]
+) -> Selection:
+    """Pick the selection to compile; exits 2 when ambiguous/unknown."""
+    if selection_id is None:
+        if len(portfolio.selections) == 1:
+            return portfolio.selections[0]
+        available = ", ".join(portfolio.selection_ids) or "(none)"
+        err_console.print(
+            "[red]This portfolio has "
+            f"{len(portfolio.selections)} selections; pass "
+            f"--selection ID.[/red]\nAvailable: {available}"
+        )
+        raise SystemExit(2)
+    selection = portfolio.get_selection(selection_id)
+    if selection is None:
+        available = ", ".join(portfolio.selection_ids) or "(none)"
+        err_console.print(
+            f"[red]No selection '{selection_id}' in this portfolio."
+            f"[/red]\nAvailable: {available}"
+        )
+        raise SystemExit(2)
+    return selection
 
 
 if __name__ == "__main__":  # pragma: no cover

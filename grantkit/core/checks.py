@@ -17,6 +17,10 @@ Checks performed (all offline unless noted):
 * **budget** — arithmetic consistency (fringe/indirect), funder caps, and —
   only when ``BLS_API_KEY`` / ``GSA_API_KEY`` are set — BLS salary and GSA
   per-diem sanity (these make network calls, so they are opt-in).
+* **selection model** — when grant.yaml binds a ``budget_model:`` portfolio
+  selection, the portfolio integrity gates run (schema validation,
+  referential checks, the co-funding gate) plus funder caps against the
+  compiled selection total.
 * **funder rules** — the rule pack's formatting rules. When the pack declares
   ``content_engine: nsf_pappg`` the full NSF PAPPG content validator runs.
 * **spelling** — US/UK spelling locale from the pack.
@@ -114,6 +118,7 @@ def run_checks(
     items += _check_markdown(project)
     items += _check_citations(project)
     items += _check_budget(project, pack)
+    items += _check_selection_model(project)
     items += _check_funder_rules(project, pack)
     items += _check_spelling(project)
     if check_urls:
@@ -485,6 +490,66 @@ def _check_salaries(
                 )
             )
     return out
+
+
+def _check_selection_model(project: "GrantProject") -> list[CheckItem]:
+    """Selection-model integrity — only when grant.yaml binds one.
+
+    A ``budget_model:`` block binds the grant to one selection of a
+    portfolio directory (see ``docs/budget-model.md``). This runs the
+    portfolio integrity gates — schema validation, referential checks,
+    the co-funding gate — plus the bound pack's funder caps against the
+    compiled selection total.
+    """
+    binding = project.budget_model
+    if not binding:
+        return []
+    from ..menu.gates import run_gates
+    from ..menu.loader import PortfolioError, load_portfolio
+
+    portfolio_rel = binding.get("portfolio")
+    if not portfolio_rel or not isinstance(portfolio_rel, str):
+        return [
+            CheckItem(
+                level="error",
+                rule="budget_model_invalid",
+                message=(
+                    "budget_model must carry a 'portfolio' path (a "
+                    "directory with menu.yaml, rates.yaml, and "
+                    "selections)."
+                ),
+            )
+        ]
+    try:
+        portfolio = load_portfolio((project.root / portfolio_rel).resolve())
+    except PortfolioError as exc:
+        return [
+            CheckItem(
+                level="error",
+                rule="budget_model_unreadable",
+                message=f"Could not load the bound portfolio: {exc}",
+            )
+        ]
+
+    selection_id = binding.get("selection")
+    if selection_id is None and len(portfolio.selections) == 1:
+        selection_id = portfolio.selections[0].id
+    if (
+        not isinstance(selection_id, str)
+        or portfolio.get_selection(selection_id) is None
+    ):
+        available = ", ".join(portfolio.selection_ids) or "(none)"
+        return [
+            CheckItem(
+                level="error",
+                rule="unknown_selection",
+                message=(
+                    f"budget_model selection '{selection_id}' not "
+                    f"found in the portfolio (available: {available})."
+                ),
+            )
+        ]
+    return run_gates(portfolio, selection_id, project.pack)
 
 
 def _check_funder_rules(

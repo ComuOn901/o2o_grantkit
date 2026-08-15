@@ -349,6 +349,22 @@ class GrantProject:
         return bibs[0] if bibs else None
 
     @property
+    def budget_model(self) -> Optional[dict[str, Any]]:
+        """The ``budget_model:`` binding (portfolio + selection), if any.
+
+        A grant project may bind itself to one selection of a portfolio
+        directory (``menu.yaml`` + ``rates.yaml`` + ``selections/``)::
+
+            budget_model:
+              portfolio: ../org-portfolio
+              selection: oaif-2026
+
+        See ``docs/budget-model.md``.
+        """
+        value = self._get("budget_model")
+        return value if isinstance(value, dict) else None
+
+    @property
     def budget_path(self) -> Optional[Path]:
         """Locate a budget.yaml, if one exists."""
         explicit = self._get("budget")

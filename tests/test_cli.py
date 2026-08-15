@@ -12,13 +12,14 @@ def _init(runner, path, funder="nuffield-rda"):
     return runner.invoke(main, ["init", "--funder", funder, str(path)])
 
 
-def test_five_verbs_registered():
+def test_six_verbs_registered():
     assert set(main.commands) == {
         "init",
         "check",
         "build",
         "review",
         "status",
+        "budget",
     }
 
 
