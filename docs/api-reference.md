@@ -90,6 +90,27 @@ validate_pack(load_pack_dict("pbif"))   # [] when valid
 A `FunderPack` exposes `id`, `name`, `program`, `locale`, `accepts_markdown`,
 `sections`, `formatting_rules`, `budget_rules`, `portal`, and `review_rubric`.
 
+## Budget model
+
+```python
+from grantkit.menu import load_portfolio, run_gates, compile_selection
+
+portfolio = load_portfolio("org-portfolio")     # menu + rates + selections
+findings = run_gates(portfolio)                 # list[CheckItem]
+selection = portfolio.get_selection("oaif-2026")
+cost = compile_selection(selection, portfolio)  # SelectionCost
+cost.total_usd, cost.fit
+cost.to_dict()
+```
+
+`run_gates(portfolio, selection_id=None, pack=None)` scopes the
+per-selection gates to one selection when given an id, and applies a
+`FunderPack`'s `budget_rules` caps to each compiled total when given a
+pack. `compile_selection` assumes the gates passed — an unresolved item,
+role, or unit raises `KeyError`. See the
+[budget model](budget-model.md) and the
+[rates contract](rates-contract.md).
+
 ## Retained building blocks
 
 These lower-level modules are still available and power the checks above:

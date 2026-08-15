@@ -210,6 +210,11 @@ With a binding in place:
 - `grantkit budget` in the grant directory compiles the bound
   selection with no flags.
 
+A broken binding is itself a check error: `budget_model_invalid` (the
+block has no `portfolio` path), `budget_model_unreadable` (the
+portfolio directory will not load), or `unknown_selection` (the bound
+id is not in the portfolio).
+
 ## The budget verb
 
 ```
@@ -219,6 +224,7 @@ grantkit budget [PATH]
   --check            run the gates only; exit 1 on errors, 2 on an
                      unreadable portfolio
   --json             emit the full structured compilation as JSON
+                     (with --check, the gate findings)
   --output PATH      write the markdown budget document to a file
   --narrative        include the narrative skeleton in the markdown
                      (without --output, prints the markdown document)

@@ -30,7 +30,7 @@ grantkit check                         # lint against funder rules
 grantkit build --format pdf --share    # compile + shareable review page
 ```
 
-## The five verbs
+## The six verbs
 
 | Verb | What it does |
 |------|--------------|
@@ -39,12 +39,14 @@ grantkit build --format pdf --share    # compile + shareable review page
 | `build` | Compile responses into one document; always writes `status.json`. |
 | `review` | Emit a review packet for an AI agent (no AI calls). |
 | `status` | Completion %, per-section word counts, deadline countdown. |
+| `budget` | Compile a budget from a priced work-item menu + rates + a selection. |
 
 ## Next steps
 
 - [Getting started](getting-started.md)
 - [CLI reference](cli/overview.md)
 - [Funder rule packs](packs.md)
+- [The budget model](budget-model.md) and [rates contract](rates-contract.md)
 - [Artifacts and the status.json contract](artifacts.md)
 - [MCP server and CI for grants](mcp-and-ci.md)
 

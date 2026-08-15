@@ -62,7 +62,8 @@ grantkit build --format pdf --share
 | `grantkit status [--json]` | Completion %, per-section word counts, deadline countdown. |
 | `grantkit budget [--selection ID] [--check]` | Compile a budget from a priced work-item menu + rates + a selection. |
 
-Every verb takes an optional path to the grant directory (default `.`).
+Every verb takes an optional path (default `.`) — the grant directory,
+or for `budget` a portfolio directory.
 
 ## What check catches
 
@@ -121,7 +122,7 @@ grantkit budget org-portfolio --check                 # integrity gates
 
 The compiled budget is a deterministic function of the three files, and
 the gates catch what spreadsheets don't: the co-funding gate errors when
-live proposals sell the same item past 100%, and fee-inclusive blocks
+live or awarded proposals sell the same item past 100%, and fee-inclusive blocks
 are never double-charged overhead. A grant project can bind one
 selection via `budget_model:` in `grant.yaml`, which folds the gates
 into `grantkit check`. See [docs/budget-model.md](docs/budget-model.md).

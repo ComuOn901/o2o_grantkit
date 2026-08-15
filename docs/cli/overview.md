@@ -77,8 +77,8 @@ grantkit budget [--selection ID] [--check] [--json] [--output FILE] [--narrative
 Compiles a portfolio selection — a proposal expressed as fractions of a
 priced work-item menu — into budget tables, a markdown budget document
 (`--output`), or structured JSON. `--check` runs the integrity gates
-only, including the co-funding gate that errors when live proposals
-sell the same item past 100%. PATH is a portfolio directory or a grant
+only, including the co-funding gate that errors when live or awarded
+proposals sell the same item past 100%. PATH is a portfolio directory or a grant
 project bound via `budget_model:`. See the
 [budget model](../budget-model.md) and
 [rates contract](../rates-contract.md).
@@ -88,5 +88,5 @@ project bound via `budget_model:`. See the
 | Code | Meaning |
 |------|---------|
 | `0` | Success (for `check`: no errors, or no warnings under `--strict`). |
-| `1` | `check` found errors (or warnings under `--strict`). |
-| `2` | Usage error — e.g. no `grant.yaml`, unknown funder pack, missing format dependency. |
+| `1` | `check` found errors (or warnings under `--strict`); `budget`/`budget --check` found gate errors. |
+| `2` | Usage error — e.g. no `grant.yaml`, unknown funder pack, missing format dependency, unreadable portfolio or unknown selection. |
