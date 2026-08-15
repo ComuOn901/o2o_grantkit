@@ -95,6 +95,24 @@ def test_cofunding_applies_to_org_base_fractions(
     assert "org base" in hits[0].message
 
 
+def test_cofunding_sums_org_base_and_line_claims(
+    make_portfolio, portfolio_selections
+):
+    # One selection claims org-floor as its org base (0.6), another
+    # sells it as a plain line (0.6): the same item is over-allocated
+    # across kinds, and the message tags which claim is the org base.
+    portfolio_selections[0]["org_base"]["fraction"] = 0.6
+    portfolio_selections[1]["selections"].append(
+        {"item": "org-floor", "fraction": 0.6}
+    )
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    hits = _by_rule(items, "cofunding_over_allocated")
+    assert len(hits) == 1
+    assert "org-floor" in hits[0].message
+    assert "sel-live-a (org base) 0.6" in hits[0].message
+    assert "sel-live-b 0.6" in hits[0].message
+
+
 # -- referential gates --------------------------------------------------
 
 
@@ -144,6 +162,33 @@ def test_dependency_cycle(make_portfolio, portfolio_menu):
     hits = _by_rule(items, "dependency_cycle")
     assert len(hits) == 1  # one cycle, reported once
     assert "alpha" in hits[0].message and "beta" in hits[0].message
+
+
+def test_dependency_self_cycle(make_portfolio, portfolio_menu):
+    portfolio_menu["items"][1]["dependencies"] = ["alpha"]
+    items = _gates(make_portfolio(menu=portfolio_menu))
+    hits = _by_rule(items, "dependency_cycle")
+    assert len(hits) == 1
+    assert "alpha -> alpha" in hits[0].message
+
+
+def test_dependency_cycle_reported_once_despite_duplicate_deps(
+    make_portfolio, portfolio_menu
+):
+    # beta lists alpha twice; the alpha <-> beta cycle is still one
+    # finding, not one per traversal.
+    portfolio_menu["items"][2]["dependencies"] = ["alpha", "alpha"]
+    items = _gates(make_portfolio(menu=portfolio_menu))
+    assert len(_by_rule(items, "dependency_cycle")) == 1
+
+
+def test_unnamed_selection_reported_with_placeholder(
+    make_portfolio, portfolio_selections
+):
+    del portfolio_selections[0]["id"]
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    hits = _by_rule(items, "selection_invalid")
+    assert any("(unnamed)" in item.message for item in hits)
 
 
 def test_fraction_out_of_range(make_portfolio, portfolio_selections):
@@ -229,6 +274,54 @@ def test_shipped_dependency_is_covered(make_portfolio, portfolio_menu):
     assert _by_rule(items, "dependency_unfunded") == []
 
 
+def test_in_flight_dependency_is_covered(make_portfolio):
+    # beta (alpha's dependency) is in-flight in the default menu: work
+    # already underway needs no new funder.
+    items = _gates(make_portfolio())
+    assert _by_rule(items, "dependency_unfunded") == []
+
+
+def test_dependency_funded_only_in_draft_still_warns(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    # The draft funds beta, but a draft's funding is not real funding:
+    # the live selections still assume work nobody has funded. The
+    # draft itself self-funds beta, so it is not warned.
+    portfolio_menu["items"][2]["status"] = "planned"
+    portfolio_selections[2]["selections"][1]["fraction"] = 0.5
+    items = _gates(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections)
+    )
+    hits = _by_rule(items, "dependency_unfunded")
+    assert {item.section for item in hits} == {"sel-live-a", "sel-live-b"}
+
+
+def test_dependency_funded_in_awarded_selection_is_covered(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["items"][2]["status"] = "planned"
+    portfolio_selections[1]["status"] = "awarded"
+    portfolio_selections[1]["selections"].append(
+        {"item": "beta", "fraction": 0.3}
+    )
+    items = _gates(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections)
+    )
+    assert _by_rule(items, "dependency_unfunded") == []
+
+
+def test_zero_fraction_line_skips_dependency_warning(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    # A lone draft declares alpha at fraction 0 while beta is planned
+    # and unfunded: a declaration assumes nothing, so no warning.
+    portfolio_menu["items"][2]["status"] = "planned"
+    draft = portfolio_selections[2]
+    draft["selections"][0]["fraction"] = 0.0
+    items = _gates(make_portfolio(menu=portfolio_menu, selections=[draft]))
+    assert _by_rule(items, "dependency_unfunded") == []
+
+
 def test_over_target_warning(make_portfolio, portfolio_selections):
     portfolio_selections[0]["target_usd"] = 100000
     items = _gates(make_portfolio(selections=portfolio_selections))
@@ -264,7 +357,42 @@ def test_loaded_only_role_raises_no_heuristics(make_portfolio):
     assert _by_rule(items, "load_factor_suspicious") == []
 
 
+def test_load_factor_band_boundaries_are_inclusive(
+    make_portfolio, portfolio_rates
+):
+    # Exactly 1.05 and exactly 2.0 sit inside the advisory band.
+    portfolio_rates["roles"][1].update(base_usd=200000, loaded_usd=210000)
+    portfolio_rates["roles"][2].update(base_usd=150000, loaded_usd=300000)
+    items = _gates(make_portfolio(rates=portfolio_rates))
+    assert _by_rule(items, "load_factor_suspicious") == []
+
+
+def test_components_tolerance_is_one_dollar(make_portfolio, portfolio_rates):
+    # Components sum to 320,000; loaded off by exactly $1 stays silent,
+    # $2 warns.
+    portfolio_rates["roles"][0]["loaded_usd"] = 320001
+    items = _gates(make_portfolio(rates=portfolio_rates))
+    assert _by_rule(items, "components_mismatch") == []
+    portfolio_rates["roles"][0]["loaded_usd"] = 320002
+    items = _gates(make_portfolio(rates=portfolio_rates))
+    assert len(_by_rule(items, "components_mismatch")) == 1
+
+
 # -- schema gating and scoping ------------------------------------------
+
+
+def test_portfolio_without_selections_is_clean(make_portfolio):
+    assert _gates(make_portfolio(selections=[])) == []
+
+
+def test_rates_schema_errors_surface_as_rates_invalid(
+    make_portfolio, portfolio_rates
+):
+    portfolio_rates["generated"] = "August 15th"
+    items = _gates(make_portfolio(rates=portfolio_rates))
+    assert items
+    assert _rules(items) == {"rates_invalid"}
+    assert all(item.level == "error" for item in items)
 
 
 def test_schema_errors_short_circuit(make_portfolio, portfolio_menu):

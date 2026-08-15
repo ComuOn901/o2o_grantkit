@@ -192,3 +192,80 @@ def test_selection_cost_raises_on_unknown_item(
     portfolio = load_portfolio(make_portfolio(selections=portfolio_selections))
     with pytest.raises(KeyError):
         selection_cost(portfolio.get_selection("sel-live-a"), portfolio)
+
+
+def test_selection_cost_raises_on_unknown_org_base_item(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["org_base"]["item"] = "zzz"
+    portfolio = load_portfolio(make_portfolio(selections=portfolio_selections))
+    with pytest.raises(KeyError, match="org_base"):
+        selection_cost(portfolio.get_selection("sel-live-a"), portfolio)
+
+
+def test_recurring_fraction_weighted(make_portfolio, portfolio_selections):
+    portfolio_selections[1]["selections"][1]["fraction"] = 0.5
+    portfolio = load_portfolio(make_portfolio(selections=portfolio_selections))
+    cost = selection_cost(portfolio.get_selection("sel-live-b"), portfolio)
+    # 0.5 x 60,000/yr x 12/12 months.
+    assert cost.recurring_usd == pytest.approx(30000.0)
+
+
+def test_overhead_included_with_mixed_labor_and_flat(
+    make_portfolio, portfolio_menu
+):
+    """The flag shields only contract/flat dollars; labor and units on
+    the same item stay overhead-bearing."""
+    portfolio_menu["items"].append(
+        {
+            "id": "mixed-block",
+            "type": "platform",
+            "title": "Mixed block",
+            "what": "Labor plus fee-inclusive contract and flat.",
+            "evidence": "Delivered.",
+            "status": "planned",
+            "dependencies": [],
+            "provenance": ["synthetic"],
+            "resourcing": {
+                "fte_months": {"Program Lead": 6},
+                "units": {"module": 1000},
+                "contract_usd": 40000,
+                "amount_usd": 10000,
+                "overhead_included": True,
+            },
+        }
+    )
+    selections = [
+        {
+            "schema": "grantkit-selection/v0",
+            "id": "sel-mixed",
+            "funder": "Synthetic Fund M",
+            "status": "live",
+            "window_months": 12,
+            "selections": [{"item": "mixed-block", "fraction": 1.0}],
+        }
+    ]
+    portfolio = load_portfolio(
+        make_portfolio(menu=portfolio_menu, selections=selections)
+    )
+    costed = _cost(portfolio, "mixed-block")
+    # labor 90,000 + units 2,500 + contract 40,000 + flat 10,000
+    assert costed.one_time_usd == pytest.approx(142500.0)
+    assert costed.overhead_bearing_one_time_usd == pytest.approx(92500.0)
+    cost = selection_cost(portfolio.get_selection("sel-mixed"), portfolio)
+    assert cost.overhead_usd == pytest.approx(0.07 * 92500.0)
+    assert cost.total_usd == pytest.approx(142500.0 + 0.07 * 92500.0)
+
+
+def test_item_cost_to_dict_copies_labor_by_role(portfolio):
+    cost = _cost(portfolio, "beta")
+    payload = cost.to_dict()
+    assert payload["one_time_usd"] == pytest.approx(80000.0)
+    assert payload["labor_usd"] == pytest.approx(60000.0)
+    assert payload["contract_usd"] == pytest.approx(20000.0)
+    assert payload["labor_by_role"]["Program Lead"]["usd"] == pytest.approx(
+        60000.0
+    )
+    # to_dict hands out copies, not live references.
+    payload["labor_by_role"]["Program Lead"]["usd"] = 0.0
+    assert cost.labor_by_role["Program Lead"]["usd"] == pytest.approx(60000.0)

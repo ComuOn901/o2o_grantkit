@@ -3,6 +3,7 @@
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from grantkit.cli import main
@@ -93,6 +94,53 @@ def test_budget_markdown_deterministic(make_portfolio, tmp_path):
     assert first.read_bytes() == second.read_bytes()
 
 
+def test_budget_json_with_output_writes_both(make_portfolio, tmp_path):
+    out = tmp_path / "budget.md"
+    result = _invoke(
+        "--selection",
+        "sel-live-a",
+        "--json",
+        "--output",
+        out,
+        make_portfolio(),
+    )
+    assert result.exit_code == 0
+    assert "## Category summary" in out.read_text(encoding="utf-8")
+    assert '"total_usd": 245056.25' in result.stdout
+
+
+def test_budget_json_takes_precedence_over_narrative(make_portfolio):
+    result = _invoke(
+        "--selection", "sel-live-a", "--json", "--narrative", make_portfolio()
+    )
+    assert result.exit_code == 0
+    assert "## Narrative skeleton" not in result.stdout
+    json.loads(result.stdout)
+
+
+def test_budget_compile_surfaces_warnings_on_stderr(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["target_usd"] = 100000
+    root = make_portfolio(selections=portfolio_selections)
+    result = _invoke("--selection", "sel-live-a", root)
+    assert result.exit_code == 0  # warnings never block a compile
+    assert "over_target" in result.stderr
+
+
+def test_budget_json_stdout_pure_despite_warnings(
+    make_portfolio, portfolio_selections
+):
+    # Warnings go to stderr so `budget --json | jq` keeps working.
+    portfolio_selections[0]["target_usd"] = 100000
+    root = make_portfolio(selections=portfolio_selections)
+    result = _invoke("--selection", "sel-live-a", "--json", root)
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["total_usd"] == 245056.25
+    assert "over_target" in result.stderr
+
+
 # -- selection resolution and exit codes --------------------------------
 
 
@@ -123,6 +171,20 @@ def test_budget_single_selection_needs_no_flag(
 def test_budget_unreadable_portfolio_exit_2(tmp_path):
     result = _invoke(tmp_path)
     assert result.exit_code == 2
+
+
+def test_budget_malformed_menu_exit_2(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").write_text("items: [unclosed\n", encoding="utf-8")
+    result = _invoke("--check", root)
+    assert result.exit_code == 2
+    assert "Could not parse" in result.output
+
+
+def test_budget_no_selections_exit_2(make_portfolio):
+    result = _invoke(make_portfolio(selections=[]))
+    assert result.exit_code == 2
+    assert "(none)" in result.output
 
 
 def test_budget_compile_refuses_on_gate_errors(
@@ -166,10 +228,47 @@ def test_budget_check_warnings_exit_0(make_portfolio, portfolio_selections):
     assert "over_target" in result.output
 
 
+def test_budget_check_empty_portfolio_passes(make_portfolio):
+    result = _invoke("--check", make_portfolio(selections=[]))
+    assert result.exit_code == 0
+
+
+def test_budget_check_scopes_to_selection(
+    make_portfolio, portfolio_selections
+):
+    # sel-draft references an unknown item; a check scoped to sel-live-a
+    # skips that per-selection gate, while an unscoped check fails.
+    portfolio_selections[2]["selections"].append(
+        {"item": "zzz", "fraction": 0.1}
+    )
+    root = make_portfolio(selections=portfolio_selections)
+    scoped = _invoke("--check", "--selection", "sel-live-a", root)
+    assert scoped.exit_code == 0
+    unscoped = _invoke("--check", root)
+    assert unscoped.exit_code == 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "defect: budget --check --selection with an unknown id exits 0 "
+        "and prints 'All checks passed' — run_gates silently scopes to "
+        "no selection, so per-selection gates and pack caps are skipped "
+        "— while plain budget exits 2 for the same typo"
+    ),
+)
+def test_budget_check_unknown_selection_id_fails(make_portfolio):
+    result = _invoke("--check", "--selection", "ghost", make_portfolio())
+    assert result.exit_code != 0
+
+
 # -- grant-project binding ----------------------------------------------
 
 
 def _bound_grant(make_grant, portfolio_root, selection="sel-live-a", **extra):
+    binding = {"portfolio": str(portfolio_root)}
+    if selection is not None:
+        binding["selection"] = selection
     config = {
         "title": "Bound grant",
         "funder": "Test Foundation",
@@ -181,10 +280,7 @@ def _bound_grant(make_grant, portfolio_root, selection="sel-live-a", **extra):
                 "file": "responses/summary.md",
             }
         ],
-        "budget_model": {
-            "portfolio": str(portfolio_root),
-            "selection": selection,
-        },
+        "budget_model": binding,
         **extra,
     }
     return make_grant(
@@ -220,6 +316,27 @@ def test_budget_selection_flag_overrides_binding(make_grant, make_portfolio):
     result = _invoke("--selection", "sel-live-b", grant_root)
     assert result.exit_code == 0
     assert "sel-live-b" in result.output
+
+
+def test_budget_binding_without_selection_single_proposal(
+    make_grant, make_portfolio, portfolio_selections
+):
+    # A binding with no `selection:` key compiles a one-proposal
+    # portfolio without needing --selection.
+    portfolio_root = make_portfolio(
+        selections=[], single_selection=portfolio_selections[0]
+    )
+    grant_root = _bound_grant(make_grant, portfolio_root, selection=None)
+    result = _invoke(grant_root)
+    assert result.exit_code == 0
+    assert "sel-live-a" in result.output
+
+
+def test_budget_binding_unknown_selection_exit_2(make_grant, make_portfolio):
+    grant_root = _bound_grant(make_grant, make_portfolio(), selection="ghost")
+    result = _invoke(grant_root)
+    assert result.exit_code == 2
+    assert "sel-live-a" in result.output  # lists what exists
 
 
 def test_budget_grant_without_binding_exit_2(make_grant, simple_config):
@@ -271,6 +388,41 @@ def test_check_unknown_selection_is_an_error(make_grant, make_portfolio):
     hits = [i for i in result.items if i.rule == "unknown_selection"]
     assert len(hits) == 1
     assert "sel-live-a" in hits[0].message
+
+
+def test_check_auto_binds_single_selection(
+    make_grant, make_portfolio, portfolio_selections
+):
+    portfolio_root = make_portfolio(
+        selections=[], single_selection=portfolio_selections[0]
+    )
+    grant_root = _bound_grant(make_grant, portfolio_root, selection=None)
+    result = run_checks(GrantProject(grant_root))
+    assert not [i for i in result.items if i.rule == "unknown_selection"]
+    assert result.errors == 0
+
+
+def test_check_binding_without_portfolio_key_is_an_error(make_grant):
+    config = {
+        "title": "Bound grant",
+        "funder": "Test Foundation",
+        "sections": [
+            {
+                "id": "summary",
+                "title": "Summary",
+                "required": True,
+                "file": "responses/summary.md",
+            }
+        ],
+        "budget_model": {"selection": "sel-live-a"},
+    }
+    grant_root = make_grant(
+        config, {"responses/summary.md": "A tidy summary."}
+    )
+    result = run_checks(GrantProject(grant_root))
+    hits = [i for i in result.items if i.rule == "budget_model_invalid"]
+    assert len(hits) == 1
+    assert hits[0].level == "error"
 
 
 def test_check_unreadable_portfolio_is_an_error(make_grant, tmp_path):

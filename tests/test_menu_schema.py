@@ -88,6 +88,12 @@ def test_menu_item_duration_must_be_int(portfolio_menu):
     assert any("duration_months" in e for e in validate_menu(portfolio_menu))
 
 
+def test_menu_item_duration_bool_rejected(portfolio_menu):
+    # YAML `duration_months: true` is a bool, not an int.
+    portfolio_menu["items"][1]["duration_months"] = True
+    assert any("duration_months" in e for e in validate_menu(portfolio_menu))
+
+
 def test_menu_item_dependencies_required_list(portfolio_menu):
     del portfolio_menu["items"][1]["dependencies"]
     assert any("dependencies" in e for e in validate_menu(portfolio_menu))
@@ -134,12 +140,57 @@ def test_menu_item_overhead_included_boolean(portfolio_menu):
     assert any("overhead_included" in e for e in validate_menu(portfolio_menu))
 
 
+def test_menu_units_must_be_mapping(portfolio_menu):
+    portfolio_menu["items"][3]["resourcing"]["units"] = ["module"]
+    assert any(
+        "'units' must be a mapping" in e for e in validate_menu(portfolio_menu)
+    )
+
+
+def test_menu_unit_cost_entry_must_be_mapping(portfolio_menu):
+    portfolio_menu["unit_costs"]["module"] = 2.5
+    assert any(
+        "unit_costs['module'] must be a mapping" in e
+        for e in validate_menu(portfolio_menu)
+    )
+
+
+def test_menu_unit_cost_provenance_must_be_list(portfolio_menu):
+    portfolio_menu["unit_costs"]["module"]["provenance"] = "synthetic"
+    assert any(
+        "'provenance' must be a list" in e
+        for e in validate_menu(portfolio_menu)
+    )
+
+
+def test_menu_item_entry_must_be_mapping(portfolio_menu):
+    portfolio_menu["items"].append("alpha")
+    assert any(
+        "items[6] must be a mapping" in e
+        for e in validate_menu(portfolio_menu)
+    )
+
+
+def test_menu_get_item_lookup(portfolio_menu):
+    menu = Menu.from_dict(portfolio_menu)
+    item = menu.get_item("alpha")
+    assert item is not None and item.title == "Alpha coverage"
+    assert menu.get_item("ghost") is None
+
+
 def test_menu_from_dict_survives_garbage():
     menu = Menu.from_dict(
         {"items": ["nope", {"resourcing": "flat"}], "unit_costs": 3}
     )
     assert menu.unit_costs == {}
     assert len(menu.items) == 1
+
+
+def test_menu_from_dict_skips_non_dict_unit_costs():
+    menu = Menu.from_dict(
+        {"unit_costs": {"module": 2.5, "ok": {"usd_per_unit": 1}}}
+    )
+    assert list(menu.unit_costs) == ["ok"]
 
 
 # -- rates.yaml ---------------------------------------------------------
@@ -223,10 +274,57 @@ def test_rates_provenance_must_be_list(portfolio_rates):
     assert any("'provenance'" in e for e in validate_rates(portfolio_rates))
 
 
+def test_rates_role_entry_must_be_mapping(portfolio_rates):
+    portfolio_rates["roles"].append("freelancer")
+    assert any(
+        "roles[3] must be a mapping" in e
+        for e in validate_rates(portfolio_rates)
+    )
+
+
+def test_rates_components_must_be_list(portfolio_rates):
+    portfolio_rates["roles"][0]["components"] = {"employer_taxes": 18000}
+    assert any(
+        "'components' must be a list" in e
+        for e in validate_rates(portfolio_rates)
+    )
+
+
+def test_rates_component_entry_must_be_mapping(portfolio_rates):
+    portfolio_rates["roles"][0]["components"][0] = "employer taxes"
+    assert any(
+        "components[0] must be a mapping" in e
+        for e in validate_rates(portfolio_rates)
+    )
+
+
+def test_rates_get_role_lookup(portfolio_rates):
+    rates = Rates.from_dict(portfolio_rates)
+    role = rates.get_role("Program Lead")
+    assert role is not None and role.loaded_usd == 180000
+    assert rates.get_role("Ghost") is None
+
+
 def test_rates_from_dict_survives_garbage():
     rates = Rates.from_dict({"roles": [None, {"components": "x"}]})
     assert len(rates.roles) == 1
     assert rates.roles[0].components == []
+
+
+def test_rates_from_dict_skips_non_dict_components(portfolio_rates):
+    portfolio_rates["roles"][0]["components"] = [
+        "cash",
+        {"name": "benefits", "amount_usd": 1, "basis": "assumed"},
+    ]
+    rates = Rates.from_dict(portfolio_rates)
+    role = rates.get_role("Encoding Lead")
+    assert [comp.name for comp in role.components] == ["benefits"]
+
+
+def test_rates_from_dict_drops_non_mapping_benchmark(portfolio_rates):
+    portfolio_rates["roles"][0]["benchmark"] = "BLS"
+    rates = Rates.from_dict(portfolio_rates)
+    assert rates.get_role("Encoding Lead").benchmark is None
 
 
 # -- selection.yaml -----------------------------------------------------
@@ -299,6 +397,25 @@ def test_selection_lines_shape(portfolio_selections):
     assert any("'fraction'" in e for e in validate_selection(selection))
     selection["selections"] = [{"item": "alpha", "fraction": "half"}]
     assert any("'fraction'" in e for e in validate_selection(selection))
+
+
+def test_selection_line_entry_must_be_mapping(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["selections"] = ["alpha"]
+    assert any(
+        "selections[0] must be a mapping" in e
+        for e in validate_selection(selection)
+    )
+
+
+def test_selection_from_dict_skips_non_dict_lines(portfolio_selections):
+    data = _selection(portfolio_selections)
+    data["selections"].insert(0, "alpha")
+    selection = Selection.from_dict(data)
+    assert [line.item for line in selection.selections] == [
+        "alpha",
+        "gamma-units",
+    ]
 
 
 def test_selection_from_dict_preserves_explicit_zero(
