@@ -91,7 +91,7 @@ pre-award rate object inside a budget compilation.]
 proposals as selections over it. The org maintains its work-item database
 once; each funder sees a view: selected items, fractions, an org-base
 allocation, a window. Views make co-funding legible instead of narrative.
-[Verdict: novel as a mechanism. The ancestors — basis-of-estimate libraries,
+[Verdict: novel as a mechanism. The ancestors — basis-of-estimate reuse,
 shared data commons, common applications, braided-funding practice — all
 reuse by copying forward (estimates, text, data); none constrains N live
 proposals as fractional views over one priced substrate.]
@@ -136,10 +136,11 @@ this lane is a language model writing a budget-shaped table as prose.
 
 [Instrumentl](https://www.instrumentl.com/product-overview) pairs grant
 discovery with tracking and post-award management; its budget feature,
-[Budget Spenddown Tracking](https://help.instrumentl.com/en/articles/9114092-budget-spenddown-tracking),
-takes a funder-approved award budget, extracts its categories, syncs actuals
-from accounting, and alerts on over- and under-spend — post-award and
-expense-side. [Grantable](https://grantable.co/) runs
+[Budget Spenddown Tracking](https://www.instrumentl.com/blog/grant-spenddown-tracking),
+tracks expenses against an award budget in real time, with spending goals
+by category and expense uploads from accounting — post-award and
+expense-side (the feature's help article is login-gated; we describe what
+the public blog post documents). [Grantable](https://grantable.co/) runs
 [AI drafting over a content library](https://www.grantable.co/features/ai-grant-writing-assistant)
 — write once, reuse across proposals — a narrative cousin of C4's substrate,
 with no budget model, no fractions, no checks.
@@ -149,10 +150,12 @@ simulates a six-reviewer committee; budget appears only as interview
 questions that ground the narrative, and the committee is stochastic
 critique, not machine-checkable validation. FreeWill's
 [Grant Assistant](https://www.nonprofits.freewill.com/products/grant-assistant)
-is the lane's nearest neighbor to C5: it generates a requirements matrix
-from the RFP and scans the proposal against it to catch gaps before
-submission — but the matrix is model-generated per proposal, not a
-versioned, citable rule pack, and the check is advisory prose, not a
+is the lane's nearest neighbor to C5: its
+[Respond tool](https://www.grantassistant.ai/respond) develops "a matrix of
+all the proposal's requirements" from the funding opportunity and "scans
+your draft to make sure you've addressed each one," catching overlooked
+errors before submission — but the matrix is model-generated per proposal,
+not a versioned, citable rule pack, and the check is advisory prose, not a
 deterministic exit code.
 [Streamline](https://streamlineclimate.com/solutions/startup) runs an AI
 grant and RFP pipeline for climate applicants — opportunity search,
@@ -229,13 +232,12 @@ supported *budget-planning* feature; nothing gates allocation across
 simultaneous, not-yet-awarded proposals.
 
 [Sage Intacct's grants tracking and billing](https://www.sage.com/en-us/sage-business-cloud/intacct/product-capabilities/extended-capabilities/grants-tracking-billing/)
-allocates expenses to grants across payables, purchasing, ledger, expenses,
-and timesheets; bills indirect costs at negotiated, specific, or markup
-rates; tracks employee effort per grant from timesheets; and flags
-unallowable spend against budget. This is how double-charging is actually
-prevented today: after award, expense by expense, by bookkeeping discipline.
-It is also a C3 contrast — indirect and fringe are configured rates, not
-law. [Martus](https://www.martussolutions.com/capabilities/personnel) is the
+associates entries with grants at transaction entry, bills indirect costs
+at negotiated, specific, or markup rates, and tracks employee effort per
+grant from integrated timekeeping data. This is how double-charging is
+actually prevented today: after award, transaction by transaction, by
+bookkeeping discipline. It is also a C3 contrast — indirect costs are
+configured rates, not law. [Martus](https://www.martussolutions.com/capabilities/personnel) is the
 lane's nearest neighbor to C2 and C4: its personnel budgeting supports an
 employee funded by multiple grants, allocated by hours, amount, or
 percentage, by month or year. A person split across grants by percentage is
@@ -287,8 +289,8 @@ née ecrt, dominates university compliance with 2 CFR 200.430: it
 that principal investigators certify *after the fact*, as traditional effort
 reporting or project-based payroll confirmation.
 [Maximus ERS](https://maximus.com/specialized-markets/higher-ed/effort-reporting-system-and-services)
-is the same category — web-based, after-the-fact certification with
-escalation workflows. Both are strong evidence *for* C2's novelty: the
+is the same category — web-based certification with escalation workflows
+for delinquent forms. Both are strong evidence *for* C2's novelty: the
 incumbent solution is post-award attestation, workflow-managed but
 substantively human.
 
@@ -302,7 +304,8 @@ University pre-award offices review the forms so listed effort sums
 correctly (e.g.,
 [Tufts OVPR guidance](https://viceprovost.tufts.edu/policies-forms-guides/current-and-pending-other-support-proposals-and-awards)).
 [NSF's current-and-pending FAQ](https://www.nsf.gov/funding/senior-personnel-documents/faq/current-pending)
-describes using the data to assess overcommitment, with no automated check.
+describes using the data to "assess the capacity of the individual" and
+potential "overlap/duplication," with no automated summation documented.
 We found no agency system that automatically sums commitments across
 applications; the guidance uniformly describes staff review. This is the
 closest practice to C2 anywhere: the constraint is standard, the machine
@@ -310,18 +313,20 @@ gate absent.
 
 [NIH ASSIST and the eRA validations](https://www.era.nih.gov/about-era/other-services/validations)
 are the strongest single prior art against C5. Applications are validated
-against "many NIH business rules" before submission; errors block
-submission, warnings do not; failures produce an
+against "many of NIH and Grants.gov's business rules" before submission;
+applications with errors are stopped from submission, warnings do not
+block; failures produce an
 [itemized errors-and-warnings results page](https://www.era.nih.gov/erahelp/assist/Content/ASSIST_Help_Topics/5_Preview_Print_Submit/Submit_Validated_Application.htm).
 Free to applicants, closed system. What it is not: open, versioned,
 applicant-side, or portable — the rules are opaque implementation, the
 artifact is a transient results page, and coverage is federal NIH-family
 forms.
 
-[Grants.gov Workspace](https://www.grants.gov/applicants/encountering-error-messages.html)
-documents "Check for Errors" and Check Application runs that validate fields
-and cross-form consistency — budget totals must reconcile between SF-424A
-detail and summary — before submission. Its
+[Grants.gov](https://www.grants.gov/applicants/encountering-error-messages.html)
+rejects applications at submission for schema and format problems — its
+public error documentation is a troubleshooting list of submission-time
+technical errors ("Mandatory Forms Not Found") rather than a validation
+specification, and documents no pre-submission cross-form checks. Its
 [system-to-system pages](https://www.grants.gov/system-to-system/grantor-system-to-system/schemas)
 publish versioned XML schemas for opportunity and application handling
 (GrantsCommonTypes-V1.0, GrantsCommonElements-V1.0,
@@ -330,16 +335,17 @@ ApplicantCommonElements-V1.0, GrantsFundingSynopsis-V2.0); the
 serves the SF-424 family as sample PDFs marked not submittable, and we did
 not confirm per-form XSDs on the public pages. Partial prior art for C5's
 "form rules as code": federal system-to-system interchange is literally
-versioned schema, but per-form business rules and caps are only partly
-encoded, the validator is a hosted black box, and nothing lands in the
-applicant's repo.
+versioned schema, but the public pages document format enforcement rather
+than encoded business rules or caps, the validator is a hosted black box,
+and nothing lands in the applicant's repo.
 
 [Cayuse 424](https://support.cayuse.com/hc/en-us/articles/115013731528)
 builds system-to-system proposals with a running errors-warnings-info list
 replicating Grants.gov and agency validations, and
 [auto-calculates budgets](https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S)
-from institutional profiles — fringe rate tables, 3% inflation escalation,
-1% yearly fringe drift, F&A averaged across fiscal years. That is prior art
+from institutional profiles — fringe rate tables, set as percentages or
+per-person dollar amounts, with escalation and indirect-cost rates
+configured as separate institutional settings. That is prior art
 against C5 (live validation with severity levels) and against C1's weak form
 (budgets computed from structured inputs and rate tables). What is missing
 for C1 proper: the inputs are cost categories and rates, not a work-item
@@ -359,10 +365,11 @@ closed.
 
 The closest pre-award multi-funder allocation practice found anywhere is the
 Advance Planning Document regime in state health and human services systems.
-[45 CFR 95.610](https://www.law.cornell.edu/cfr/text/45/95.610) requires
-states to submit APDs with a proposed budget and "an estimate of the
-prospective cost allocation/distribution to the various State and Federal
-funding sources" *before* acquiring systems;
+[45 CFR 95.610](https://www.law.cornell.edu/cfr/text/45/95.610) defines the
+APD's contents — a proposed budget and "an estimate of the prospective cost
+allocation/distribution to the various State and Federal funding sources" —
+and [§95.611](https://www.law.cornell.edu/cfr/text/45/95.611) requires
+approval *before* acquisition;
 [CMS](https://www.medicaid.gov/federal-policy-guidance/downloads/faq061319.pdf)
 and [ACF](https://acf.gov/sites/default/files/documents/ocse/apd_guide_2.pdf)
 fund at enhanced matching rates (90/75/50) and publish cost-allocation
@@ -404,8 +411,8 @@ machine validation of content.
 are the strongest pattern-level prior art for C5: NIST schemas plus an
 Apache-2.0 CLI under which security compliance documents — SSPs, catalogs —
 are authored as markdown and JSON in git, validated and assembled by a tool
-"designed to operate as a CI/CD pipeline running on top of compliance
-artifacts in git" ([oscal.io/tools](https://oscal.io/tools/)). C5's residual
+"designed to operate as a CICD pipeline running on top of compliance
+artifacts" ([oscal.io/tools](https://oscal.io/tools/)). C5's residual
 novelty is domain transfer — funder packs, budget caps, submission formats —
 not the pattern. [Vale](https://vale.sh/) lints prose against YAML rule
 packages in CI, used by the Grafana, Datadog, and Elastic docs teams;
@@ -477,16 +484,17 @@ Beyond the assigned lanes sit the closest conceptual neighbors — the ones a
 referee will raise.
 
 Government contracting solved structured cost buildup decades ago.
-[Deltek ProPricer](https://www.propricer.com/), since 1984, generates FAR-15
-and DCAA-defensible cost volumes from labor categories, indirect rate
-structures, escalation, and CLINs — the strongest C1 neighbor in any
-industry. The differences that keep C1 alive: closed; priced in
+[Deltek ProPricer](https://www.propricer.com/) — "refined through decades,"
+per the vendor — generates "compliant, submission-ready cost volumes" for
+CAS-, FAR-, and TINA-governed pricing from labor categories, reusable rate
+structures, and overhead and G&A indirects — the strongest C1 neighbor in
+any industry. The differences that keep C1 alive: closed; priced in
 labor-category hours, not work items with completion evidence; no
 cross-proposal allocation constraint; no CI or reproducibility story; wrap
 rates as pooled multipliers (the C3 contrast again).
 [BOEMax](https://www.projstream.com/basis-of-estimate-proposal-software-boemax)
-keeps a central library of process templates — tasks, labor, materials — and
-historical actuals, reused across proposals for consistent estimates: the
+reuses historical projects and actuals across proposals — "fast, auditable
+reuse," with AI-driven recall of similar past tasks: the
 nearest neighbor to C4's menu, with no co-funding fractions (GovCon prices
 one contract at a time), no sum-to-one gate, no funder-facing view.
 Construction estimating — RSMeans data, Gordian — has compiled priced
@@ -496,10 +504,11 @@ machine-checkable completion evidence and compiling under funder rule packs.
 
 On the philanthropy side, the
 [Philanthropy Data Commons](https://philanthropydatacommons.org/) is
-open-source shared-data infrastructure — nonprofits enter organization and
-proposal data once and multiple funders read it by API — C4-adjacent on the
-*data* axis, but the shared objects are org profiles and proposal metadata,
-not priced work items, with no budget or allocation semantics.
+shared-data infrastructure — a nonprofit maintains "one verified profile
+connecting to any participating funder," exchanged with consent, with
+[an API as "the central integration point"](https://philanthropydatacommons.org/howitworks/architecture/)
+— C4-adjacent on the *data* axis, but the shared objects are verified org
+profiles, not priced work items, with no budget or allocation semantics.
 [Common grant applications](https://learning.candid.org/resources/knowledge-base/common-grant-application/)
 — regional grantmaker associations, JustFund — are C4's inverse: N funders,
 one *form*, no org-side substrate, no fractions.
@@ -510,14 +519,19 @@ C4's conceptual ancestor in program finance: each funder pays its share, no
 double-charging, enforced by guides, spreadsheets, and humans.
 
 Three funder-facing surfaces frame C6.
-[DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Vendor-pricing)
-shows donors vendor-priced manifests of real line items, with price deltas
-reconciled by policy — the nearest C6 neighbor, but the items are retail
-SKUs, not the org's cost model, and there is no configurator over rates or
-assumptions. [Open Collective](https://docs.opencollective.com/help/product/ledger)
-makes a collective's full ledger — income, expenses, balance — public by
-default: live *actuals*, not a forward cost model, with no selection or
-toggle semantics. [Manifund](https://manifund.org/) runs open-source
+[DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Prices-in-the-shopping-portal)
+prices classroom-project materials through its integrated-vendor shopping
+portal, with price deltas reconciled by policy — savings fund additional
+projects, cost increases up to 10% absorbed, larger ones resolved by
+swapping items within the posted price — the nearest C6 neighbor, but the
+items are retail SKUs, not the org's cost model, and there is no
+configurator over rates or assumptions.
+[Open Collective](https://docs.opencollective.com/help/collectives/budget)
+keeps collective budgets transparent — "everyone can see where the money
+comes from and what it's spent on," per documentation the platform now
+banners as out of date — exposing recent transactions, balance, and totals
+raised and disbursed on the public page: live *actuals*, not a forward cost
+model, with no selection or toggle semantics. [Manifund](https://manifund.org/) runs open-source
 regranting with public projects, funding goals, a public grant ledger, and
 impact-certificate experiments — budgets as prose numbers, not models.
 
@@ -534,8 +548,8 @@ structured error report — exists at scale in NIH ASSIST, and its pattern —
 versioned rule packs validated in CI — exists in compliance-trestle; the
 claim is the join, open and applicant-side and portable across funders. C2,
 C4, and C6 stand as novel in their mechanisms, each with named ancestors:
-the NIH overlap rule and effort certification for C2; BOE libraries, the
-APD regime, and data commons for C4; itemized vendor pricing and live
+the NIH overlap rule and effort certification for C2; BOE reuse, the
+APD regime, and data commons for C4; vendor-priced project items and live
 ledgers for C6.
 
 | Claim | Verdict | Nearest neighbors |
@@ -543,9 +557,9 @@ ledgers for C6.
 | C1 budget as compiled artifact | Partial prior art | [Kuali Research budget engine](https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations) (rate-table autocalc; open-source ancestor frozen since 2017); [Deltek ProPricer](https://www.propricer.com/) (structured cost buildup) |
 | C2 pre-award double-billing gate | Novel as a machine check; the invariant is old policy | [NIH commitment-overlap rule](https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm), staff-resolved at award; [Huron ECC](https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview) post-award certification |
 | C3 rule-derived personnel rates | Partial prior art | [Payroll-tax calculators](https://jupid.com/payroll-tax-calculator) (rules-based loading, no provenance, post-hire); [pooled fringe rates](https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S) (the incumbent) |
-| C4 funder-as-view | Novel as a mechanism; ancestors are copy-forward reuse | [BOEMax](https://www.projstream.com/basis-of-estimate-proposal-software-boemax) estimate library; [Philanthropy Data Commons](https://philanthropydatacommons.org/) (one dataset, many funders) |
+| C4 funder-as-view | Novel as a mechanism; ancestors are copy-forward reuse | [BOEMax](https://www.projstream.com/basis-of-estimate-proposal-software-boemax) historical-estimate reuse; [Philanthropy Data Commons](https://philanthropydatacommons.org/) (one profile, many funders) |
 | C5 versioned funder packs + CI + status artifact | Exists (core, closed); partial (open, applicant-side packaging) | [NIH ASSIST](https://www.era.nih.gov/about-era/other-services/validations) business-rule validation; [compliance-trestle](https://github.com/oscal-compass/compliance-trestle) rule packs in git + CI |
-| C6 funder-facing configurator | Novel; thinnest neighbor set, adoption untested | [DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Vendor-pricing) itemized vendor pricing; [Open Collective](https://docs.opencollective.com/help/product/ledger) live public ledger |
+| C6 funder-facing configurator | Novel; thinnest neighbor set, adoption untested | [DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Prices-in-the-shopping-portal) vendor-priced project items; [Open Collective](https://docs.opencollective.com/help/collectives/budget) transparent budget and ledger |
 
 : Claim × verdict × nearest neighbor, from the 2026-08-14 sweep. {#tbl-verdicts}
 
