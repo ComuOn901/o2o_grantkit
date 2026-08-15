@@ -27,7 +27,8 @@ provider: "eggnest-employer 0.2.0"   # generator + version (required)
 generated: "2026-08-15"              # ISO date (required)
 scenario: "axiom-foundation-2026"    # provider-side scenario id (optional)
 currency: USD                        # required; must match the menu
-jurisdiction: "US-NY"                # optional
+jurisdiction: "US-NY"                # optional; omit when roles span
+                                     # jurisdictions or none is set
 method: >-                           # optional prose derivation
   Loaded cost = base + employer payroll taxes (computed from encoded
   law via policyengine) + employer retirement contribution (rate x
@@ -47,7 +48,7 @@ roles:
       - name: retirement
         amount_usd: 47500
         basis: computed
-        source: "25% x base, IRC 415(c) cap"
+        source: "25% x base, 415(c) cap from policyengine parameters"
       - name: benefits
         amount_usd: 14500
         basis: configured
@@ -68,7 +69,25 @@ roles:
   `computed` (derived from encoded rules or data), `configured` (a
   scenario input someone chose), or `assumed` (a placeholder guess).
   The point is honesty about provenance: a reviewer can see at a
-  glance which dollars trace to law and which to assumption.
+  glance which dollars trace to law and which to assumption. The basis
+  names where the binding number came from, not whether arithmetic
+  ran: the reference provider labels retirement `configured` when the
+  scenario fixes the amount or supplies a manual cap, and `computed`
+  only when the cap is resolved from policyengine parameters.
+- **Unknown keys are tolerated**: validation checks the keys named
+  here and ignores anything else, at every level of the file, so
+  providers may carry extra keys. The reference provider adds
+  `benchmark.org_percentile` — where the org's package lands on the
+  market curve, in the same percent units as the sibling `percentile`
+  — and, on degraded roles, a role-level `notes` string. Such a file
+  still validates cleanly; GrantKit never renders keys it does not
+  know.
+- **`method` is the honesty surface**: the paragraph should state what
+  loaded cost includes *and excludes* (the reference provider names
+  bonus, equity, and health benefits as excluded), and any fallback
+  taken during generation — roles whose employer taxes could not be
+  computed, tax variables unavailable in the environment — must be
+  stated there too.
 - **Single currency**: the rates currency must match the menu currency;
   a mismatch is a validation error (GrantKit does not convert).
 - **Provider identity**: `provider` and `generated` appear verbatim in
@@ -111,3 +130,12 @@ over your payroll export works. Guidelines:
    them verbatim.
 6. Test your numbers in your own suite. GrantKit will not re-derive
    them, by design.
+7. Never degrade silently — recommended conduct for every provider.
+   When part of the computation is unavailable (a role with no
+   employer tax state; tax variables missing from the installed
+   environment), emit the number you can stand behind, say exactly
+   what is missing, and raise a visible warning at generation time.
+   The reference provider does all three: `loaded_usd` falls back to
+   the guaranteed package total, the role carries a `notes` string
+   saying employer taxes were not computed, `method` records the
+   fallback, and generation emits a runtime warning.
