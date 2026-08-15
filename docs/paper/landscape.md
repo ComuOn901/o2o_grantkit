@@ -1,20 +1,29 @@
 # Landscape: prior art for the "Grants as code" claims
 
-Evidence file for `grants-as-code.qmd`. Compiled 2026-08-14 by web sweep
-(vendor docs, help centers, federal guidance; marketing claims discounted where
-docs said less). Adversarial stance: each entry states which claim (C1–C6) it
-touches and whether it weakens it. Absence-of-evidence caveat: sweeps were
-US-centric and English-language; a claim marked NOVEL means *no prior art
-found*, not *proven absent*.
+Evidence file for `grants-as-code.qmd`. Compiled from a targeted August 2026
+web and product scan (2026-08-14/15) across six tool lanes plus an
+adjacent-fields pass (vendor docs, help centers, federal guidance; marketing
+claims discounted where docs said less). This was not a systematic literature
+review. Adversarial stance: each entry states which claim (C1–C6) it touches
+and whether it weakens it. Absence-of-evidence caveat: the scan was US-centric
+and English-language; a claim marked NOVEL means *no prior art found*, not
+*proven absent*.
 
 Claims under test (abbreviated; full statements in the paper):
 
-- **C1** Budgets as compiled artifacts (priced work-item menu → pure-function budget, reproducible in CI).
-- **C2** Pre-award cross-application double-billing gate (per-item co-funding fractions across simultaneous proposals must sum ≤ 1, machine-checked).
-- **C3** Rule-derived personnel rates (loaded cost from encoded tax/retirement law, with benchmark provenance).
+- **C1** Budgets as compiled artifacts (priced work-item menu with a required
+  completion-evidence field → pure-function budget, reproducible in CI).
+- **C2** Pre-award cross-application over-allocation gate (declared per-item
+  co-funding fractions across live/awarded proposals must sum ≤ 1,
+  machine-checked within one modeled portfolio).
+- **C3** Rule-derived personnel rates (modeled guaranteed employer cost from
+  encoded tax rules and a stated retirement-cap assumption, with optional
+  benchmark provenance).
 - **C4** Funder-as-view (one org work substrate; N proposals as selections with co-funding fractions).
-- **C5** Versioned funder packs (form rules + budget caps as code; CI-validated applications emitting a status artifact).
-- **C6** Funder-facing configurator over the org's own live cost model.
+- **C5** Versioned funder packs (form rules + budget caps as code;
+  applicant-controlled CI validation emitting a status artifact).
+- **C6** Proposed funder-facing configurator over the org's own cost model
+  (not implemented in the current 0.3 review branch).
 
 ---
 
@@ -90,17 +99,18 @@ writing a budget-shaped table as prose.
   free prompt tool that has an LLM write a budget table from a project
   description. <https://logicballs.com/tools/grant-budget-template>. Verdict:
   C1 contrast in its purest form — the budget is generated text with no
-  underlying model; re-running it does not reproduce it.
+  documented underlying model or reproducibility mechanism.
 
 **Lane 1 net:** kills nothing. Strongest neighbor: FreeWill's requirements
 matrix (C5-adjacent, non-deterministic).
 
 ## 2. Grants management systems (funder side)
 
-Lane question: does any GMS expose applicant-side budget composition or
-machine-checkable application validation? **Finding: all validate form fields
-and workflow state; none sees inside the applicant's cost model, and none
-checks allocation across a portfolio of applications to *other* funders.**
+Lane question: does any GMS expose applicant-controlled budget composition or
+validation rules the applicant can inspect and run locally? **Finding: the
+products reviewed validate form fields and workflow state; none was found to
+see inside the applicant's cost model or check allocation across a portfolio
+of applications to *other* funders.**
 
 - **Fluxx Grantmaker** — Fluxx.io. Funder GMS: configurable forms and
   workflows, grantee portal, budget/finance tracking of awards, automated
@@ -148,15 +158,15 @@ checks allocation across a portfolio of applications to *other* funders.**
   GMS to budget mechanics (indirect-cost tracking), still award-tracking, not
   proposal compilation.
 
-**Lane 2 net:** kills nothing. Machine validation of applications is
-ubiquitous *inside closed funder portals* — which sharpens rather than kills
-C5: the novelty left is applicant-side, versioned, open, funder-portable rule
-packs with a repo-resident status artifact.
+**Lane 2 net:** kills nothing. Machine validation of applications is common
+inside closed hosted systems — which sharpens rather than kills C5: the
+novelty left is applicant-controlled, local, versioned, open,
+funder-portable rule packs with a repo-resident status artifact.
 
 ## 3. Nonprofit budgeting / finance tools
 
-Lane question: does anything do multi-funder allocation with
-double-billing/effort checks **pre-award**? **Finding: multi-funder
+Lane question: does anything do multi-funder allocation with pre-award
+over-allocation checks? **Finding: multi-funder
 allocation is a solved *post-award accounting* problem and a supported
 *budget-planning* feature; nothing gates allocation across simultaneous
 not-yet-awarded proposals.**
@@ -169,15 +179,14 @@ not-yet-awarded proposals.**
   (scripted fetches hit a bot check; content verified in a live browser
   session, 2026-08-15).
   Verdict: touches C2 from the post-award side — fund segregation and
-  allocation rules are how double-charging is prevented *after* award, by
-  bookkeeping discipline, not by a pre-award machine gate. Also C3 contrast:
-  indirect billed at configured rates, not law.
+  allocation rules are one control against duplicate charging *after* award,
+  through bookkeeping discipline, not a pre-award machine gate.
 - **Martus** — Martus Solutions. Nonprofit budgeting/forecasting; personnel
   budgeting explicitly supports employees "funded by multiple grants,"
   allocated by hours, amount, or percentage, by month or year. SaaS.
   <https://www.martussolutions.com/capabilities/personnel>. Verdict: nearest
   Lane-3 neighbor to C2/C4 — a person split across grants with percentages is
-  the same object as a co-funding fraction. But it is an internal planning
+  structurally analogous to a co-funding fraction. But it is an internal planning
   worksheet for known/expected funding: no notion of *simultaneous pending
   applications*, no constraint that fractions across open proposals sum ≤ 1,
   no machine gate, no artifact a funder sees.
@@ -188,9 +197,10 @@ not-yet-awarded proposals.**
 - **Propel Nonprofits — True Program Costs template** — free spreadsheet +
   guide for program-based budgeting and admin-cost allocation.
   <https://propelnonprofits.org/resources/true-program-costs-program-budget-and-allocation-template-and-resource/>.
-  Verdict: C1 contrast — the sector's state of the art for "budget from
-  structure" is a spreadsheet with formulas: computed, but not versioned,
-  testable, or reproducible outside the workbook.
+  Verdict: C1 contrast — an example of "budget from structure" is a
+  spreadsheet with formulas. Its arithmetic is computed and can be audited;
+  the contrast is the absence of a textual schema, headless CI build, and
+  portfolio-wide gate outside the workbook.
 - **Wallace Foundation StrongNonprofits toolkit** — free templates including
   a *Program-Based Budget Builder* (allocates personnel and shared costs to
   programs) and an out-of-school-time cost calculator ("works like a mortgage
@@ -200,33 +210,35 @@ not-yet-awarded proposals.**
   Verdict: the cost calculator is a genuine (closed-form) cost model exposed
   to planners — a C6 ancestor, but generic benchmarks, not the org's own live
   model, and not funder-facing diligence.
-- **Indirect-cost practice** — 2 CFR 200 de minimis rate (10%, raised to 15%
-  in the 2024 OMB revision) or a negotiated NICRA; implemented in budgets as a
-  multiplier row. Verdict: C3 contrast — the entire compliance apparatus
-  standardizes *multipliers*, which is exactly what C3 replaces with computed
-  statutory costs.
-- **Fund-accounting validation genre** (Aplos, MIP, FastFund, etc.) —
-  validation rules that prevent charging the wrong fund; allocation rules that
-  distribute an expense across funds on entry.
+- **Indirect-cost practice** is a different cost concept from C3's modeled
+  employer payroll and retirement costs. The direct incumbent comparison is
+  the pooled fringe-rate practice documented in the Kuali and Cayuse entries
+  below.
+- **Fund-accounting validation genre** — validation rules that prevent
+  charging the wrong fund; allocation rules that distribute an expense across
+  funds on entry.
   <https://www.criadv.com/insight/managing-restricted-funds/>. Verdict: C2's
   "don't bill twice" invariant exists in production software — *post-award,
   expense-by-expense*. The pre-award, proposal-fraction version is not found.
 
-**Lane 3 net:** kills nothing; establishes that the ≤100% allocation object
-exists in planning tools (Martus) and the double-charging invariant exists in
-accounting tools (Intacct et al.), both outside the pre-award window.
+**Lane 3 net:** kills nothing; establishes that percentage allocation exists
+in planning tools (Martus) and controls against duplicate charging exist in
+accounting tools (Intacct et al.), both outside the pre-award window and
+neither identical to the paper's per-work-item gate.
 
 ## 4. Federal compliance machinery
 
 Lane question: what exists for cross-application allocation checking, and is
-any of it pre-award/automatic vs post-award/manual attestation? **Finding:
-the *rule* (no >100% commitment; no double-charging) is old and explicit; the
-*enforcement* is human at every pre-award point found. Budget arithmetic and
-form validation, by contrast, are heavily automated (ASSIST, Grants.gov,
+any of it pre-award/automatic versus post-award/manual? **Finding: related
+rules (no >100% personnel commitment; no duplicate charging) are old and
+explicit; their enforcement is human at every pre-award point found. The
+paper's per-item rule is a stricter organizational planning control, not the
+identical federal invariant. Budget arithmetic and form validation, by
+contrast, are heavily automated (ASSIST, Grants.gov,
 Cayuse, Kuali) — inside closed systems.**
 
 - **Effort certification: Huron ECC (née ecrt)** — Huron Consulting Group.
-  The dominant university system for 2 CFR 200.430 personnel-cost compliance:
+  A university system for 2 CFR 200.430 personnel-cost compliance:
   generates effort/payroll statements per period which PIs *certify after the
   fact* (traditional effort reporting or project-based payroll confirmation).
   Commercial, closed.
@@ -256,10 +268,11 @@ Cayuse, Kuali) — inside closed systems.**
   documented
   (<https://www.nsf.gov/funding/senior-personnel-documents/faq/current-pending>).
   No evidence found of any agency system that automatically sums commitments
-  across applications; guidance uniformly describes staff review. Verdict:
-  the closest *practice* to C2 anywhere — the constraint is standard; the
-  machine gate is absent. C2 survives on the "machine-checked, pre-award"
-  qualifier, and the paper should cite this lineage explicitly.
+  across applications; the guidance reviewed describes staff review. Verdict:
+  the closest related *practice* to C2 found in the scan — personnel-overlap
+  review is standard; the exact per-work-item machine gate is absent. C2
+  survives on its machine-checked planning mechanism, and the paper should
+  cite this lineage without claiming the objects are identical.
 - **NIH ASSIST / eRA validations** — era.nih.gov. Applications are validated
   against "many of NIH and Grants.gov's business rules" pre-submission;
   applications with errors are stopped from submission, warnings don't
@@ -269,9 +282,10 @@ Cayuse, Kuali) — inside closed systems.**
   <https://www.era.nih.gov/erahelp/assist/Content/ASSIST_Help_Topics/5_Preview_Print_Submit/Submit_Validated_Application.htm>.
   Verdict: **strongest single prior art against C5.** Machine-encoded funder
   rules + automatic validation + a structured error/warning report existed
-  here first. What it is not: open, versioned, applicant-side, or portable —
-  the rules are opaque implementation, the "artifact" is a transient results
-  page, and only federal NIH-family forms are covered.
+  here first. What it is not: open, applicant-controlled, locally runnable,
+  versioned by the applicant, or portable — the rules are opaque
+  implementation, the "artifact" is a transient results page, and only
+  federal NIH-family forms are covered.
 - **Grants.gov Workspace + forms repository** — HHS/OMB. Grants.gov rejects
   applications at submission for schema and format problems; its public
   error-message page is a troubleshooting list of submission-time technical
@@ -307,7 +321,8 @@ Cayuse, Kuali) — inside closed systems.**
   and C1's weak form (budget computed from structured inputs + rate tables).
   What's missing for C1 proper: the inputs are cost categories and rates, not
   a work-item menu; the computation is interactive and stateful, not a pure
-  function; nothing is reproducible outside the vendor system.
+  function; the reviewed documentation describes no external reproducibility
+  path.
 - **Kuali Research budget engine** — Kuali (commercial SaaS). Lineage: MIT
   Coeus → Kuali Coeus (2006, community source under the Educational Community
   License, Kuali Foundation) → 2014 for-profit spin-off (KualiCo, later
@@ -320,9 +335,9 @@ Cayuse, Kuali) — inside closed systems.**
   and unrecovered F&A.
   <https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations>.
   Verdict: same as Cayuse for C1; also the sharpest C3 contrast in the wild —
-  fringe is *defined* as salary × configured rate; no one computes it from
-  statute. Precision note: not simply "closed" — an open ancestor exists,
-  frozen since 2017.
+  fringe is *defined* as salary × configured rate; in the grant tooling
+  reviewed, none we found computes it from statute. Precision note: not
+  simply "closed" — an open ancestor exists, frozen since 2017.
 - **APD / FFP practice (state HHS systems)** — 45 CFR 95.610 defines the
   Advance Planning Document to include a proposed budget and "an estimate
   of the prospective cost allocation/distribution to the various State and
@@ -348,25 +363,23 @@ Cayuse, Kuali) — inside closed systems.**
   spreadsheet produced the numbers; provenance ends at data entry.
 
 **Lane 4 net:** wounds C5 (validation with status reporting exists at scale,
-closed) and weak-C1 (rate-table budget engines exist, closed); strengthens C2
-(the rule is everywhere, the machine gate nowhere) and frames C4's APD
-ancestor.
+closed) and weak-C1 (rate-table budget engines exist, closed); supplies
+related anti-overlap practice for C2 and frames C4's APD ancestor.
 
 ## 5. Docs-as-code / CI applied to documents
 
 Lane question: prior art for the *pattern* — and anything literally styled
 "grants as code" or "CI for grants"? **Finding: the pattern is mature in
-adjacent domains (security compliance, legal, prose style, scientific
-publishing). The exact phrases return nothing tool-shaped for grant
-applications; the nearest live practice is crypto grant programs run as
-markdown PRs.**
+adjacent domains (security compliance, legal, prose style). The scan found no
+tool-shaped use of the exact phrases for grant applications; the nearest live
+practice found is crypto grant programs run as markdown PRs.**
 
 - **Exact-phrase search** — "grants as code": no tool, paper, or product
   found using the phrase for grant applications (results are license/crypto
   noise). "CI for grants": nothing on point. Verdict: the framing appears
   unclaimed as of 2026-08.
-- **Git-native grant programs** — Web3 Foundation Grants-Program, gno.land
-  grants, Secret Labs: applications are markdown files submitted by pull
+- **Git-native grant programs** — Web3 Foundation Grants-Program and gno.land
+  grants: applications are markdown files submitted by pull
   request and reviewed in-repo. <https://github.com/w3f/Grants-Program>,
   <https://github.com/gnolang/grants>. Verdict: real prior art for
   *proposals in git with PR review* — but the artifact is narrative-only; no
@@ -397,16 +410,8 @@ markdown PRs.**
   benefits administrations; Accord Project makes contracts with computable
   components. <https://www.inria.fr/en/catala-software-dgfip-cnaf>,
   <https://docs.accordproject.org/docs/accordproject-slc.html>. Verdict:
-  legitimizes C3's premise (statute → code is a proven technique); nobody has
-  pointed it at grant budgets.
-- **Quarto / LaTeX in CI** — scientific manuscripts routinely render and
-  check in CI (e.g., quarto-dev/quarto-actions on GitHub; Overleaf's git
-  bridge). Verdict: background practice the paper builds on; no grant
-  semantics.
-- **OPA / policy-as-code** — general-purpose policy engines (Rego) evaluate
-  structured inputs in CI; applied to infrastructure, Kubernetes, and (via
-  OSCAL tooling) compliance data. No application to grant forms/budgets
-  found. Verdict: pattern prior art only.
+  legitimizes C3's premise (statute → code is a proven technique); no
+  application to grant budgets was found in this scan.
 
 **Lane 5 net:** kills any claim that the *pattern* (documents + rules + CI +
 status artifacts) is new — trestle/Vale/docassemble own it. All six claims
@@ -415,11 +420,11 @@ packs, statutory rates), which is where the sweep found no occupants.
 
 ## 6. Compensation benchmarking for budgets
 
-Lane question: does any tool compute LOADED costs (payroll tax + retirement
-caps) from rules rather than multipliers? **Finding: benchmarks are data
-products; loading is either a flat multiplier (grant practice) or a
-rules-based calculation in *payroll/hiring* tools that never touches grant
-budgets and carries no benchmark provenance.**
+Lane question: does any tool compute modeled guaranteed employer costs
+(payroll tax plus a stated retirement-cap assumption) from rules rather than
+pooled fringe multipliers? **Finding: benchmarks are data products, while
+web calculators compute parts of employer burden without producing a
+grant-budget rate object capable of carrying benchmark provenance.**
 
 - **Candid Nonprofit Compensation Report** — Candid (GuideStar). Annual
   study of executive comp from IRS 990s (2025 edition: 217k records, 131k
@@ -434,31 +439,25 @@ budgets and carries no benchmark provenance.**
   <https://www.erieri.com/nonprofitcomparablesassessor>. Verdict: same —
   benchmarks + audit rationale, no statutory loading.
 - **BLS OEWS** — Bureau of Labor Statistics. Public wage percentiles for
-  ~830 occupations, national/state/metro; the standard citation for salary
-  reasonableness in budget justifications. <https://www.bls.gov/oes/>.
-  Verdict: the provenance substrate C3 consumes; BLS publishes data, not
+  ~830 occupations, national/state/metro. <https://www.bls.gov/oes/>.
+  Verdict: a provenance substrate C3 can consume; BLS publishes data, not
   loaded-cost tooling.
 - **"True cost of employee" calculators** — genre of free web calculators
   (e.g., <https://jupid.com/payroll-tax-calculator>,
   <https://truetools.org/tools/employee-cost-calculator-usa>) computing
   employer FICA/FUTA/SUTA (some citing IRS Pub 15 parameters) plus rule-of-
   thumb benefits/overhead percentages. Verdict: partial prior art for C3's
-  *computation* — employer tax from encoded rules exists as throwaway web
+  *computation* — employer tax from encoded rules exists as standalone web
   tools; none handles retirement-plan employer caps as law, none carries
   benchmark provenance, none feeds a budget artifact.
-- **Payroll engines (ADP, Gusto, et al.)** — production payroll computes
-  actual employer burden from encoded tax law every pay run. Verdict: proves
-  C3's computation is feasible and standard *post-hire*; no pre-award
-  budgeting product surfaces it. (No vendor doc found marketing payroll-grade
-  loading for grant budgets.)
 - **Grant-practice loading** — universities and nonprofits budget personnel
-  as salary × pooled fringe rate (Kuali/Cayuse mechanics above; NICRA
-  culture). Verdict: the incumbent C3 answer is a multiplier everywhere.
+  as salary × pooled fringe rate (Kuali/Cayuse mechanics above). Verdict: the
+  direct incumbent C3 answer is a configured multiplier.
 
 **Lane 6 net:** C3's parts all exist separately (benchmarks: Candid/ERI/BLS;
-rules-based loading: payroll engines and web calculators; multiplier culture:
-everywhere). Composing them into a reproducible pre-award rate artifact with
-provenance is the unoccupied square.
+rules-based employer-tax calculation: web calculators; pooled fringe rates:
+Kuali/Cayuse). Composing them into a reproducible pre-award rate artifact
+capable of carrying optional benchmark provenance is the unoccupied square.
 
 ## 7. Adjacent fields the paper must address
 
@@ -470,8 +469,8 @@ referee will raise them.
   generating "compliant, submission-ready cost volumes" for CAS/FAR/TINA
   audit-ready pricing; "refined through decades," per the vendor. Commercial
   (propricer.com now redirects to Deltek's product page).
-  <https://www.propricer.com/>. Verdict: **the strongest C1 neighbor in any
-  industry** — budgets computed from structured cost elements and rate math,
+  <https://www.propricer.com/>. Verdict: **the strongest C1 neighbor found in
+  this scan** — budgets computed from structured cost elements and rate math,
   reused across proposals. Differences that keep C1 alive: closed, priced in
   labor-category hours not work items with completion evidence, no
   cross-proposal allocation constraint, no CI/reproducibility story, wrap
@@ -484,11 +483,6 @@ referee will raise them.
   Verdict: nearest neighbor to C4's *menu* — priced past work feeding many
   proposals. No co-funding fractions (GovCon prices one contract
   at a time), no sum≤1 gate, no funder-facing view.
-- **Construction estimating (RSMeans data, Gordian)** — priced work-item
-  catalogs (assemblies/unit costs) compiled into bids by estimating software;
-  decades old. Verdict: C1's "priced menu → budget" is ancient in
-  construction; the grant-domain novelty is the menu carrying *machine-
-  checkable completion evidence* and compiling under funder rule packs.
 - **Philanthropy Data Commons** — shared-data infrastructure: a nonprofit
   maintains "one verified profile connecting to any participating funder,"
   exchanged with consent; the architecture page calls the API "the central
@@ -504,9 +498,9 @@ referee will raise them.
   <https://learning.candid.org/resources/knowledge-base/common-grant-application/>.
   Verdict: C4's inverse — N funders, one *form*; no org-side substrate, no
   fractions.
-- **Braided/blended funding practice** — HHS/ASPE toolkit, Mathematica's
-  ECE braiding tool, TFAH compendium: established methodology for financing
-  one program from several funding streams with cost-allocation discipline
+- **Braided/blended funding practice** — HHS/ASPE toolkit and Mathematica's
+  ECE braiding tool: established methodology for financing one program from
+  several funding streams with cost-allocation discipline
   ("each funder pays its share, no double-charging").
   <https://ecbraiding.mathematica.org/>,
   <https://www.aspe.hhs.gov/sites/default/files/2021-08/EC_Braiding_Toolkit.pdf>.
@@ -535,8 +529,8 @@ referee will raise them.
   narrowed to what those pages state).
   Verdict: C6-adjacent transparency — live *actuals*, not a forward cost
   model; no selection/toggle semantics.
-- **Manifund** — open-source regranting site: public projects with funding
-  goals, public grant ledger, impact-certificate experiments.
+- **Manifund** — public regranting site: projects with funding goals, a grant
+  ledger, and impact-certificate experiments.
   <https://manifund.org/>. Verdict: funder-facing project marketplace;
   budgets are prose numbers, not models.
 
@@ -547,45 +541,49 @@ referee will raise them.
 **C1 — Budgets as compiled artifacts.** AGAINST: rate-driven budget engines
 (Kuali, Cayuse) compute budgets from structured inputs; ProPricer/BOEMax
 build cost volumes from structured cost elements and reused historical
-estimates; construction estimating
-compiles bids from priced catalogs; every serious nonprofit budget is already
-formula-driven in a spreadsheet. FOR: all of the above are closed or, where
-once open, frozen since 2017 (Kuali's AGPL ancestor), and all are
-interactive and category-based; none is a pure function over a versioned
-work-item menu, none reruns in CI, none ties items to completion evidence.
+estimates. Formula spreadsheets can also be deterministic, audited, and
+version-controlled. FOR: the products reviewed are closed or, where once
+open, frozen since 2017 (Kuali's AGPL ancestor), and their documented
+workflows are interactive and category-based; none documents a headless pure
+function over a versioned work-item menu plus a portfolio-wide gate in CI.
 **Verdict: PARTIAL PRIOR ART** — claim survives only in its precise form
 ("pure function, work-item menu, reproducible in CI"); the loose form
 ("computing budgets from data") is dead and the paper should concede it.
 
-**C2 — Pre-award cross-application double-billing gate.** AGAINST: the
-constraint itself is canonical federal policy (NIH commitment overlap,
-NSF C&P), university pre-award offices review for it, Martus plans multi-grant
-splits, fund accounting enforces single-charging post-award, and APDs declare
-multi-funder shares before spend. FOR: every pre-award instance found is
-human review of self-reported forms — NIH resolves overlap "at the time of
-award" by conversation; no system found that mechanically sums per-item (or
-per-person) fractions across simultaneous open applications and fails a
-build. **Verdict: NOVEL (as a machine check)** — with the explicit caveat
-that the *invariant* is old; novelty is enforcement timing + automation.
+**C2 — Pre-award cross-application over-allocation gate.** AGAINST: related
+principles are canonical federal policy (NIH commitment overlap and controls
+against duplicate charging), university pre-award offices review personnel
+commitments, Martus plans multi-grant splits, fund accounting controls
+post-award charging, and APDs declare multi-funder shares before spend. FOR:
+every related pre-award instance found is human review of self-reported forms
+— NIH resolves commitment overlap "at the time of award" by conversation;
+no system found mechanically sums declared per-item fractions across open
+applications and fails a check. **Verdict: NOVEL (as a machine check)** — the
+underlying policy principles are old, but the precise per-item planning rule
+is this implementation's operationalization. Its current status-based model
+of simultaneity is an implementation limit, not evidence that federal policy
+defines the same object.
 
-**C3 — Rule-derived personnel rates.** AGAINST: payroll engines compute
-employer burden from encoded law daily; free calculators do FICA/FUTA/SUTA
-from published parameters; Candid/ERI/BLS provide benchmark provenance as
-products; grant practice has a complete, compliant answer (pooled fringe
-rates, NICRA, de minimis). FOR: no tool found that composes statutory
-loading + benchmark provenance into a citable pre-award rate object inside a
-budget compilation; in grant tooling, fringe is definitionally a multiplier.
+**C3 — Rule-derived personnel rates.** AGAINST: free calculators compute
+FICA/FUTA/SUTA from published parameters; Candid/ERI/BLS provide benchmark
+provenance as products; and grant practice has a direct incumbent answer in
+pooled fringe rates. FOR: no tool found that composes modeled statutory
+employer costs, a stated retirement-cap assumption, and optional benchmark
+provenance in a pre-award rate object capable of carrying that provenance
+inside a budget compilation; in the grant tooling reviewed, fringe is a
+configured multiplier.
 **Verdict: PARTIAL PRIOR ART** — the computation and the benchmarks both
-exist; the composition and placement (pre-award, provenance-carrying,
-compiled) do not.
+exist; the composition and placement (pre-award, capable of carrying optional
+benchmark provenance, compiled) do not.
 
 **C4 — Funder-as-view.** AGAINST: BOEMax reuses historical estimates across
 proposals; PDC shares one org dataset with many funders; common grant apps
 share one form; braided-funding practice allocates one program across
 funders; Grantable-style content libraries reuse narrative. FOR: no system
 found where N live proposals are *selections with fractions* over one priced
-substrate such that views stay consistent by construction; in every neighbor
-the reuse is copy-forward (estimates, text, data), not a constrained view.
+substrate such that views stay consistent by construction; the neighbors copy
+estimates or text, share profiles, standardize forms, or allocate manually,
+but do not provide the same constrained view.
 **Verdict: NOVEL (as a mechanism)** — with named conceptual ancestors (BOE
 reuse, PDC, braiding) the paper should cite.
 
@@ -596,12 +594,13 @@ and rejects malformed submissions (per-form XSD publication unverified);
 Cayuse replicates agency validations with severity levels;
 Submittable/Fluxx gate eligibility in-portal; OSCAL/trestle already do
 versioned rule packs + CI + generated compliance documents in another domain;
-Vale already does rule-pack linting of prose in CI. FOR: no applicant-side,
-open, funder-portable rule packs with citations/provenance; no philanthropic
-funder coverage; no repo-resident machine-readable status artifact. **Verdict:
-EXISTS (core) / PARTIAL PRIOR ART (packaging)** — the paper must claim only
-the *open, versioned, applicant-side, any-funder* packaging, and cite ASSIST
-+ trestle as the two halves it joins.
+Vale already does rule-pack linting of prose in CI. FOR: no
+applicant-controlled, locally runnable, open, funder-portable rule packs with
+citations/provenance; no philanthropic funder coverage; no repo-resident
+machine-readable status artifact. **Verdict: EXISTS (core) / PARTIAL PRIOR
+ART (packaging)** — the paper must claim only the *open, versioned,
+applicant-controlled, local, any-funder* packaging, and cite ASSIST + trestle
+as the two halves it joins.
 
 **C6 — Funder-facing configurator over the org's live cost model.** AGAINST:
 DonorsChoose prices project items through integrated vendors; Open Collective
@@ -610,18 +609,20 @@ a generic program-cost calculator. FOR: none of these hands a funder
 presets/toggles over the *organization's own* menu and rate model with
 budgets recomputed live; the neighbors expose items, actuals, or generic
 models, not the org's compiled forward model. **Verdict: NOVEL** — thinnest
-evidence base of the six (fewest neighbors to test against), and the paper
-already flags adoption as untested beyond one live diligence.
+evidence base of the six (fewest neighbors to test against). The interface is
+proposed rather than implemented in the current 0.3 review branch, and funder
+adoption is untested; the case only pressure-tested the underlying model by
+recompiling it.
 
 ## Summary table
 
 | Claim | Verdict | Nearest neighbor | Citation |
 |---|---|---|---|
 | C1 budget as compiled artifact | PARTIAL PRIOR ART | Kuali Research budget engine (rate-table autocalc; open-source ancestor frozen since 2017); Deltek ProPricer (structured cost buildup) | <https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations>; <https://www.propricer.com/> |
-| C2 pre-award double-billing gate | NOVEL (machine check; invariant is old policy) | NIH commitment-overlap rule, staff-resolved at award; Huron ECC post-award certification | <https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm>; <https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview> |
-| C3 rule-derived personnel rates | PARTIAL PRIOR ART | Payroll-tax calculators/engines (rules-based loading, no provenance, post-hire); pooled fringe multipliers (incumbent) | <https://jupid.com/payroll-tax-calculator>; <https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S> |
-| C4 funder-as-view | NOVEL (mechanism; ancestors are copy-forward reuse) | BOEMax historical estimates reused across proposals; Philanthropy Data Commons (one profile, many funders) | <https://www.projstream.com/basis-of-estimate-proposal-software-boemax>; <https://philanthropydatacommons.org/> |
-| C5 versioned funder packs + CI + status artifact | EXISTS (core) / PARTIAL (open, applicant-side packaging) | NIH ASSIST business-rule validation with error/warning report; OSCAL compliance-trestle (rule packs in git + CI) | <https://www.era.nih.gov/about-era/other-services/validations>; <https://github.com/oscal-compass/compliance-trestle> |
+| C2 pre-award over-allocation gate | NOVEL (machine check; related policy principles are old) | NIH commitment-overlap rule, staff-resolved at award; Huron ECC post-award reporting | <https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm>; <https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview> |
+| C3 rule-derived personnel rates | PARTIAL PRIOR ART | Payroll-tax calculators (rules-based loading, no provenance); pooled fringe multipliers (incumbent) | <https://jupid.com/payroll-tax-calculator>; <https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S> |
+| C4 funder-as-view | NOVEL (mechanism; ancestors reuse estimates or share profiles without fractional constraints) | BOEMax historical estimates reused across proposals; Philanthropy Data Commons (one profile, many funders) | <https://www.projstream.com/basis-of-estimate-proposal-software-boemax>; <https://philanthropydatacommons.org/> |
+| C5 versioned funder packs + CI + status artifact | EXISTS (core) / PARTIAL (open, applicant-controlled packaging) | NIH ASSIST business-rule validation with error/warning report; OSCAL compliance-trestle (rule packs in git + CI) | <https://www.era.nih.gov/about-era/other-services/validations>; <https://github.com/oscal-compass/compliance-trestle> |
 | C6 funder-facing configurator | NOVEL (weakest neighbor set, adoption untested) | DonorsChoose vendor-priced project items; Open Collective transparent budget/ledger | <https://help.donorschoose.org/hc/en-us/articles/201936606-Prices-in-the-shopping-portal>; <https://docs.opencollective.com/help/collectives/budget> |
 
 Exact-phrase check: no prior tool or paper styled "grants as code" or "CI for

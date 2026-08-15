@@ -3,100 +3,116 @@ title: "Grants as code: compiled budgets, funder views, and machine-checkable ap
 author:
   - name: Max Ghenis
     affiliations: [PolicyEngine, The Axiom Foundation]
-date: 2026-08-14
+date: 2026-08-15
 format:
   html: default
   pdf: default
 abstract: >
-  Grant applications are assembled by hand from three kinds of material that
-  organizations already hold in structured form: the work they intend to do,
-  the cost of the people and systems that do it, and the rules of the funder's
-  form. We describe a pipeline that treats each as data — a priced menu of
-  work items with machine-checkable completion evidence; personnel rates
-  derived from encoded tax and retirement law with benchmark provenance;
-  funder proposals as selections over the shared menu, with co-funding
-  fractions that make cross-application double-billing a pre-award,
-  machine-checked invariant; and versioned funder packs that validate and
-  assemble the application in continuous integration. A six-lane landscape
-  review adjudicates what is new. The pre-award cross-application gate is
-  novel as a machine check, though the invariant it enforces is old federal
-  policy. Funder-as-view is novel as a mechanism, with named ancestors that
-  reuse by copying forward rather than by constrained views. The
-  funder-facing configurator is novel, with the thinnest neighbor set of the
-  six claims. Budget compilation and rule-derived rates are partially
-  anticipated — closed rate-table engines and payroll calculators exist —
-  and survive only in their precise forms. Closed funder-side validation
-  already runs at scale in NIH ASSIST; the contribution here is open,
-  versioned, applicant-side, funder-portable rule packs — a domain transfer
-  of the compliance-as-code pattern. The engine and schemas are open source;
-  the reference rates provider's public release is pending.
+  Grant applications are often assembled by hand from three kinds of
+  material: the work an organization intends to do, the cost of the people
+  and systems that do it, and the rules of the funder's form. We describe a
+  pipeline that represents each as data — a priced menu of work items with a
+  required completion-evidence field; modeled guaranteed employer costs
+  derived from encoded tax rules and a stated retirement-cap assumption,
+  with optional benchmark provenance; funder proposals as selections over
+  the shared menu, with co-funding fractions that support a pre-award
+  over-allocation check within the modeled portfolio; and versioned funder
+  packs that validate and assemble the application in continuous
+  integration. A targeted scan across six tool lanes plus an adjacent-fields
+  pass assesses prior art. In this US-centric, English-language scan, novel
+  means no prior art found, not proven absent. The pre-award
+  cross-application gate is novel as a machine check; related federal
+  anti-overlap and anti-double-charge principles are longstanding.
+  Funder-as-view is novel as a mechanism: named ancestors copy estimates or
+  text, or share organizational profiles, but do not constrain proposals as
+  fractional views over a priced substrate. The proposed funder-facing
+  configurator is novel, with the thinnest neighbor set of the six claims,
+  but is not implemented in 0.3 and its adoption is untested. Budget
+  compilation and rule-derived rates are partially anticipated — rate-table
+  engines and payroll calculators exist — and survive only in their precise
+  forms. Validation already runs at scale in NIH ASSIST; the contribution
+  here is open, versioned, applicant-controlled, repo-resident,
+  funder-portable rule packs — a domain transfer of the compliance-as-code
+  pattern. The budget engine and schemas are implemented on a review branch
+  for the companion grantkit 0.3 release; grantkit 0.2.x is available on PyPI
+  today under the MIT license. The reference rates provider remains private,
+  with public release pending.
 ---
 
 <!--
-STATUS: prose r1 (2026-08-14). Landscape merged from docs/paper/landscape.md
+STATUS: claims-red-team + sol review r1 applied (2026-08-15). Landscape
+merged from docs/paper/landscape.md
 (the committed evidence file — sole source for every tool description in §2);
 claims carry the adjudicated verdicts; §3 written to v03-design.md (the v0.3
 build spec); §4 numbers carried verbatim from the skeleton (gated diligence
 session). Remaining pipeline before publication (per standing directives):
-sol adversarial review r1 → fixes → Max-voice pass (longform pipeline;
-fable) → academic-referee cycle if journal-bound → reconcile pass: §3 DONE
-2026-08-14 (against grantkit feat/budget-model @ 9ff0a84 and
-eggnest-employer feat/rates-export rates_export.py + emitted export);
+Max-voice pass (longform pipeline; fable) → academic-referee cycle if
+journal-bound → final reconcile pass. §3 re-verified 2026-08-15 against
+grantkit feat/budget-model @ f53da71 and eggnest-employer feat/rates-export
+@ 52a0c6f (rates_export.py + emitted export);
 §4 diligence figures still re-verify against ballmer-proposal-2026 PR #17 /
 CAMPAIGN.md.
 Numbers policy: every figure cites a receipt or is labeled an assumption;
 no-fabricated-mechanisms applies to every tool description in §2 (described
 from their docs, cited, or cut).
-Availability: eggnest-employer is PRIVATE today — Max decision pending
-(publish it or keep the softened wording); see the comment in §6.
+Publication gates: release grantkit 0.3 to PyPI; make eggnest-employer public
+or retain/reword every private-provider caveat; wire the generated table in
+§3 into Quarto execution; re-run the source reconciliation; and strip these
+working comments before submission. eggnest-employer is PRIVATE today; see
+the comment in §6.
 Sync: grantkit.io gets a /paper embed route (paper-embed pattern) once public.
 -->
 
 # The claims {#sec-claims}
 
 The paper stands or falls on six claims. Each was tested adversarially
-against six tool lanes: a research pass was instructed to kill any claim
-with prior art, and its verdicts appear in brackets after each claim, argued
-in full in @sec-landscape.
+against six tool lanes plus an adjacent-fields pass: a targeted scan was
+instructed to find prior art against each claim, and its verdicts appear in
+brackets after each claim, argued in full in @sec-landscape.
 
 **C1 — Budgets as compiled artifacts.** A grant budget should be the output
 of a pure function over (menu items, rates, selection), reproducible in CI,
 not a spreadsheet edited toward a total. Changing a rate or a selection
-regenerates every downstream table identically — in the proposal document,
-the funder deck, and the org's public planning pages. [Verdict: partial
+regenerates the compiled Markdown and JSON artifacts identically; proposal
+documents, funder decks, and internal planning pages can consume those
+artifacts. [Verdict: partial
 prior art. Rate-table budget engines and structured cost buildup exist,
 closed or — where once open — frozen since 2017. We concede the loose form,
 "computing budgets from data"; the claim survives only as stated: pure
 function, work-item menu, reproducible in CI.]
 
-**C2 — The pre-award double-billing gate.** When proposals are selections
+**C2 — The pre-award over-allocation gate.** When proposals are selections
 with per-item co-funding fractions, "no item is more than 100% funded across
-simultaneous applications" becomes a machine-checked invariant at draft time.
-Federal post-award machinery (2 CFR 200 effort certification) attests this
-retrospectively and manually; we know of no pre-award, automatic equivalent.
-[Verdict: novel as a machine check. The invariant itself is old federal
-policy, and every pre-award enforcement found is human review of
-self-reported forms; the novelty is enforcement timing plus automation.]
+simultaneous applications" becomes a machine-checked portfolio rule when a
+selection enters live status. In a pre-submission workflow, an organization
+marks a proposal live before sending it. Institutional effort-reporting
+systems used to document personnel charges under 2 CFR 200.430 are related,
+retrospective controls, not the same per-item rule. [Verdict: novel as a
+machine check. The underlying anti-overlap and anti-double-charge principles
+are old federal policy; the per-item planning rule is this system's
+operationalization, and the novelty claim is enforcement timing plus
+automation.]
 
-**C3 — Rule-derived personnel rates.** Loaded personnel costs computed from
-encoded law — employer payroll taxes by jurisdiction, retirement contribution
-caps (IRS §415(c)/§402(g)) — rather than flat multipliers,
-with market benchmarks (BLS OES, sourced percentiles) attached per role. The
-budget's comp-justification appendix becomes a generated artifact. [Verdict:
-partial prior art. The computation exists in payroll engines and web
-calculators; the benchmarks exist as data products. We concede the loose
+**C3 — Rule-derived personnel rates.** Modeled guaranteed employer costs
+computed from encoded rules — employer payroll taxes by jurisdiction and a
+stated employer-contribution ceiling constructed from IRS §415(c) and
+§402(g) limits — rather than a pooled fringe multiplier, with optional market
+benchmarks (BLS OEWS, sourced percentiles) attached per role. The budget's
+comp-justification appendix becomes a generated artifact. [Verdict:
+partial prior art. The computation exists in payroll-tax calculators; the
+benchmarks exist as data products. We concede the loose
 form, "computing employer burden from rules"; what was not found is the
-composition — statutory loading plus benchmark provenance in a citable,
-pre-award rate object inside a budget compilation.]
+composition — rule-derived employer costs in a pre-award rate object capable
+of carrying optional benchmark provenance inside a budget compilation.]
 
 **C4 — Funder-as-view.** One organizational substrate (the menu), many
 proposals as selections over it. The org maintains its work-item database
 once; each funder sees a view: selected items, fractions, an org-base
 allocation, a window. Views make co-funding legible instead of narrative.
-[Verdict: novel as a mechanism. The ancestors — basis-of-estimate reuse,
-shared data commons, common applications, braided-funding practice — all
-reuse by copying forward (estimates, text, data); none constrains N live
-proposals as fractional views over one priced substrate.]
+[Verdict: novel as a mechanism. The ancestors reuse estimates or text by
+copying forward, share organizational profiles, standardize forms, or braid
+funding manually; none constrains N live proposals as fractional views over
+one priced substrate.]
 
 **C5 — Funder packs: the application as a checked build.** Funder form rules
 — section structure, word/character/page limits, budget caps, required
@@ -105,29 +121,34 @@ builds in CI to a status artifact and an assembled document. (Shipped in
 grantkit 0.2.x; @sec-pipeline.) [Verdict: the core exists at scale, closed —
 NIH ASSIST validates against encoded business rules and reports itemized
 errors and warnings. What remains, and what we claim, is the open,
-versioned, applicant-side, funder-portable packaging with a repo-resident
-status artifact — the compliance-as-code pattern carried into a new domain.]
+versioned, applicant-controlled, locally runnable, funder-portable packaging
+with a repo-resident status artifact — the compliance-as-code pattern carried
+into a new domain.]
 
-**C6 — The configurator.** Because budgets compile (C1), a funder can be
-handed the model itself: presets and toggles over the same menu and rates the
-organization runs on, every configuration inside adjudicated bounds. Scenario
-pressure-testing becomes something the funder does live, not a static
-appendix. [Verdict: novel, with the thinnest neighbor set of the six —
-and funder adoption is untested beyond one live diligence (@sec-case).]
+**C6 — The configurator.** Because budgets compile (C1), we propose a
+funder-facing surface: presets and toggles over the same menu and rates the
+organization runs on, with attempted configurations compiled and checked by
+the existing gates. This would make scenario pressure-testing interactive
+rather than a static appendix. [Verdict: novel, with the thinnest neighbor
+set of the six. The interface is not implemented in 0.3 and funder adoption
+is untested; @sec-case reports pressure-testing of the underlying model, not
+use of a configurator.]
 
-The through-line — and the paper's one-sentence thesis: **the grant pipeline
-inherits the properties of the software pipeline the moment its inputs become
-data: reproducibility, diffability, invariants checked before submission
-instead of audited after award.**
+The through-line — and the paper's one-sentence thesis: **when grant inputs
+become versioned data processed by deterministic builds and explicit checks,
+the pipeline can acquire software-pipeline properties: reproducibility,
+textual diffs, and invariants checked before submission rather than only
+reviewed after award.**
 
 # Landscape {#sec-landscape}
 
-We swept six tool lanes on 2026-08-14 — vendor documentation, help centers,
-and federal guidance, discounting marketing claims where the docs said less —
-with an adversarial brief: find prior art that kills each claim. One caveat
-governs everything that follows: the sweep was US-centric and
-English-language, so a verdict of *novel* means no prior art found, not
-proven absent.
+We conducted an August 2026 sweep (2026-08-14/15) across six tool lanes plus
+an adjacent-fields pass — vendor documentation, help centers, and federal
+guidance, discounting marketing claims where the docs said less — with an
+adversarial brief: find prior art against each claim. This was a targeted web
+and product scan, not a systematic literature review. One caveat governs
+everything that follows: the sweep was US-centric and English-language, so a
+verdict of *novel* means no prior art found, not proven absent.
 
 ## Applicant-side writing tools
 
@@ -153,11 +174,11 @@ questions that ground the narrative, and the committee is stochastic
 critique, not machine-checkable validation. FreeWill's
 [Grant Assistant](https://www.nonprofits.freewill.com/products/grant-assistant)
 is the lane's nearest neighbor to C5: its
-[Respond tool](https://www.grantassistant.ai/respond) develops "a matrix of
-all the proposal's requirements" from the funding opportunity and "scans
-your draft to make sure you've addressed each one," catching overlooked
-errors before submission — but the matrix is model-generated per proposal,
-not a versioned, citable rule pack, and the check is advisory prose, not a
+[Respond tool](https://www.grantassistant.ai/respond) derives a matrix of the
+funding opportunity's requirements and scans the draft to confirm each
+requirement is addressed, helping applicants "catch overlooked errors before
+you submit" — but the matrix is model-generated per proposal, not a
+versioned, citable rule pack, and the check is advisory prose, not a
 deterministic exit code.
 [Streamline](https://streamlineclimate.com/solutions/startup) runs an AI
 grant and RFP pipeline for climate applicants — opportunity search,
@@ -175,18 +196,19 @@ listings, a grant-writer marketplace, and a REST API — not open-source
 tooling. And a genre of free prompt tools, represented by LogicBalls'
 [AI grant budget template](https://logicballs.com/tools/grant-budget-template),
 has a model write the budget table from a project description: C1's contrast
-in its purest form, a budget as generated text that re-running does not
-reproduce.
+in its purest form, a budget as generated text with no documented
+reproducibility mechanism.
 
 The lane kills nothing. Its strongest neighbor is Grant Assistant's
 requirements matrix — C5-adjacent and non-deterministic.
 
 ## Funder-side grants management
 
-Does any grants management system expose applicant-side budget composition,
-or validation the applicant can hold? All of them validate form fields and
-workflow state; none sees inside the applicant's cost model, and none checks
-allocation across a portfolio of applications to other funders.
+Does any grants management system expose applicant-controlled budget
+composition, or validation rules the applicant can inspect and run locally?
+The products reviewed validate form fields and workflow state; none was found
+to see inside the applicant's cost model or check allocation across a
+portfolio of applications to other funders.
 
 [Fluxx Grantmaker](https://www.fluxx.io/products/grantmaker-fluxx-grants-management-software)
 gives funders configurable forms and workflows, a grantee portal, budget and
@@ -222,9 +244,9 @@ the award lifecycle for governments that receive and pass through funds —
 still award tracking, not proposal compilation.
 
 The lane sharpens C5 rather than killing it: machine validation of
-applications is ubiquitous inside closed funder portals, so the novelty left
-is applicant-side, versioned, open, funder-portable rule packs with a
-repo-resident status artifact.
+applications is common inside closed hosted systems, so the novelty left is
+applicant-controlled, local, versioned, open, funder-portable rule packs with
+a repo-resident status artifact.
 
 ## Nonprofit budgeting and finance
 
@@ -236,14 +258,13 @@ simultaneous, not-yet-awarded proposals.
 [Sage Intacct's grants tracking and billing](https://www.sage.com/en-us/sage-business-cloud/intacct/product-capabilities/extended-capabilities/grants-tracking-billing/)
 associates entries with grants at transaction entry, bills indirect costs
 at negotiated, specific, or markup rates, and tracks employee effort per
-grant from integrated timekeeping data. This is how double-charging is
-actually prevented today: after award, transaction by transaction, by
-bookkeeping discipline. It is also a C3 contrast — indirect costs are
-configured rates, not law. [Martus](https://www.martussolutions.com/capabilities/personnel) is the
+grant from integrated timekeeping data. This is one post-award control
+against duplicate charging: transaction by transaction, through bookkeeping
+discipline. [Martus](https://www.martussolutions.com/capabilities/personnel) is the
 lane's nearest neighbor to C2 and C4: its personnel budgeting supports an
 employee funded by multiple grants, allocated by hours, amount, or
 percentage, by month or year. A person split across grants by percentage is
-the same object as a co-funding fraction — but Martus is an internal
+structurally analogous to a co-funding fraction — but Martus is an internal
 planning worksheet for known or expected funding: no notion of simultaneous
 pending applications, no constraint that fractions across open proposals sum
 to at most one, no machine gate, no artifact a funder sees.
@@ -251,9 +272,10 @@ to at most one, no machine gate, no artifact a funder sees.
 shape — nonprofit FP&A templates for grants, funds, programs, and workforce
 planning. On the free end, Propel Nonprofits'
 [True Program Costs template](https://propelnonprofits.org/resources/true-program-costs-program-budget-and-allocation-template-and-resource/)
-is the sector's state of the art for budget-from-structure: a spreadsheet
-with formulas — computed, but not versioned, testable, or reproducible
-outside the workbook. The Wallace Foundation's
+is an example of budget-from-structure: a spreadsheet with formulas. Its
+arithmetic is computed and can be audited; the contrast here is the lack of a
+textual schema, headless CI build, and portfolio-wide gate outside the
+workbook. The Wallace Foundation's
 [StrongNonprofits toolkit](https://wallacefoundation.org/toolkit/strongnonprofits-toolkit?s=budgeting)
 ships a
 [Program-Based Budget Builder](https://wallacefoundation.org/sites/default/files/2023-10/program-based-budget-builder-overview.pdf)
@@ -261,32 +283,34 @@ that allocates personnel and shared costs to programs, and an
 out-of-school-time cost calculator that "works like a mortgage calculator" —
 a genuine closed-form cost model exposed to planners, and so a C6 ancestor,
 but built on generic benchmarks rather than the org's own live model, and
-not aimed at funder diligence. Indirect-cost practice itself is a C3
-contrast: 2 CFR 200's de minimis rate (10%, raised to 15% in the 2024 OMB
-revision) or a negotiated NICRA, implemented in budgets as a multiplier row
-— the compliance apparatus standardizes *multipliers*, which is exactly what
-C3 replaces with computed statutory costs. And the
+not aimed at funder diligence. The direct incumbent for C3 remains the pooled
+fringe-rate practice documented in the Kuali and Cayuse systems below;
+indirect-cost recovery is a different cost concept, not a substitute for
+employer payroll and retirement costs. And the
 [fund-accounting validation genre](https://www.criadv.com/insight/managing-restricted-funds/)
-— Aplos, MIP, FastFund — prevents charging the wrong fund and distributes
-expenses across funds on entry: the don't-bill-twice invariant, in
-production software, post-award and expense-by-expense.
+prevents charging the wrong fund and distributes expenses across funds on
+entry: the don't-bill-twice invariant, in production software, post-award
+and expense-by-expense.
 
-The lane establishes that the ≤100% allocation object exists in planning
-tools (Martus) and the double-charging invariant exists in accounting tools
-(Intacct et al.) — both outside the pre-award window.
+The lane establishes that percentage allocation exists in planning tools
+(Martus) and controls against duplicate charging exist in accounting tools
+(Intacct et al.) — both outside the pre-award window and neither identical to
+the per-work-item gate proposed here.
 
 ## Federal compliance machinery
 
 What exists for cross-application allocation checking, and is any of it
-pre-award and automatic? The rule — no more than 100% commitment, no
-double-charging — is old and explicit. Its enforcement is human at every
-pre-award point we found. Budget arithmetic and form validation, by
-contrast, are heavily automated — inside closed systems.
+pre-award and automatic? Related rules — no more than 100% personnel
+commitment and no duplicate charging — are old and explicit. We found human
+review at each pre-award point. The paper's per-work-item allocation rule is
+a stricter organizational planning control, not a claim that federal policy
+already defines the identical object. Budget arithmetic and form validation,
+by contrast, are heavily automated inside closed systems.
 
 Effort certification is the incumbent answer to cross-source personnel
 allocation.
 [Huron ECC](https://www.huronconsultinggroup.com/-/media/Resource-Media-Content/Education/research-suite/Huron-Research-Suite-Employee-Compensation-Compliance.pdf),
-née ecrt, dominates university compliance with 2 CFR 200.430: it
+née ecrt, supports university compliance with 2 CFR 200.430: it
 [generates effort and payroll statements](https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview)
 that principal investigators certify *after the fact*, as traditional effort
 reporting or project-based payroll confirmation.
@@ -309,9 +333,9 @@ correctly (e.g.,
 describes using the data to "assess the capacity of the individual" and
 potential "overlap/duplication," with no automated summation documented.
 We found no agency system that automatically sums commitments across
-applications; the guidance uniformly describes staff review. This is the
-closest practice to C2 anywhere: the constraint is standard, the machine
-gate absent.
+applications; the guidance reviewed describes staff review. This is the
+closest related practice to C2 found in the scan: personnel-overlap review is
+standard, while the exact per-work-item machine gate is absent.
 
 [NIH ASSIST and the eRA validations](https://www.era.nih.gov/about-era/other-services/validations)
 are the strongest single prior art against C5. Applications are validated
@@ -319,10 +343,10 @@ against "many of NIH and Grants.gov's business rules" before submission;
 applications with errors are stopped from submission, warnings do not
 block; failures produce an
 [itemized errors-and-warnings results page](https://www.era.nih.gov/erahelp/assist/Content/ASSIST_Help_Topics/5_Preview_Print_Submit/Submit_Validated_Application.htm).
-Free to applicants, closed system. What it is not: open, versioned,
-applicant-side, or portable — the rules are opaque implementation, the
-artifact is a transient results page, and coverage is federal NIH-family
-forms.
+Free to applicants, closed system. What it is not: open,
+applicant-controlled, locally runnable, versioned by the applicant, or
+portable — the rules are opaque implementation, the artifact is a transient
+results page, and coverage is federal NIH-family forms.
 
 [Grants.gov](https://www.grants.gov/applicants/encountering-error-messages.html)
 rejects applications at submission for schema and format problems — its
@@ -331,7 +355,7 @@ technical errors ("Mandatory Forms Not Found") rather than a validation
 specification, and documents no pre-submission cross-form checks. Its
 [system-to-system pages](https://www.grants.gov/system-to-system/grantor-system-to-system/schemas)
 publish versioned XML schemas for opportunity and application handling
-(GrantsCommonTypes-V1.0, GrantsCommonElements-V1.0,
+(e.g., GrantsCommonTypes-V1.0, GrantsCommonElements-V1.0,
 ApplicantCommonElements-V1.0, GrantsFundingSynopsis-V2.0); the
 [forms repository](https://grants.gov/forms/forms-repository/sf-424-family)
 serves the SF-424 family as sample PDFs marked not submittable, and we did
@@ -352,12 +376,13 @@ against C5 (live validation with severity levels) and against C1's weak form
 (budgets computed from structured inputs and rate tables). What is missing
 for C1 proper: the inputs are cost categories and rates, not a work-item
 menu; the computation is interactive and stateful, not a pure function; and
-nothing reproduces outside the vendor system.
+the reviewed documentation describes no external reproducibility path.
 [Kuali Research's budget engine](https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations)
 is the same shape — institutional rate tables driving automatic calculation
 "on a precise daily calculation," with cost share and unrecovered F&A — and
 the sharpest C3 contrast in the wild: fringe is *defined* as salary times a
-configured rate; no one computes it from statute. Kuali is also not simply
+configured rate; in the grant tooling reviewed, none we found computes it
+from statute. Kuali is also not simply
 closed: the engine descends from MIT's Coeus through Kuali Coeus, community
 source under the Educational Community License from 2006, spun off
 for-profit in 2014; the open-source ancestor
@@ -365,8 +390,9 @@ for-profit in 2014; the open-source ancestor
 public but frozen since January 2017, and the current commercial engine is
 closed.
 
-The closest pre-award multi-funder allocation practice found anywhere is the
-Advance Planning Document regime in state health and human services systems.
+The closest pre-award multi-funder allocation practice found in this scan is
+the Advance Planning Document regime in state health and human services
+systems.
 [45 CFR 95.610](https://www.law.cornell.edu/cfr/text/45/95.610) defines the
 APD's contents — a proposed budget and "an estimate of the prospective cost
 allocation/distribution to the various State and Federal funding sources" —
@@ -397,17 +423,17 @@ strengthens C2 and supplies C4's manual ancestor.
 
 Who already owns the pattern — documents plus rules plus CI plus status
 artifacts — and has anyone pointed it at grants? The pattern is mature in
-adjacent domains. The exact phrases return nothing: no tool, paper, or
-product styled "grants as code" or "CI for grants" was found for grant
-applications in the 2026-08 sweep (results are license and crypto noise).
+adjacent domains. The scan found no tool, paper, or product styled "grants as
+code" or "CI for grants" for grant applications (results were license and
+crypto noise).
 
 The nearest live practice is git-native grant programs: the
-[Web3 Foundation Grants-Program](https://github.com/w3f/Grants-Program),
-[gno.land grants](https://github.com/gnolang/grants), and Secret Labs take
+[Web3 Foundation Grants-Program](https://github.com/w3f/Grants-Program) and
+[gno.land grants](https://github.com/gnolang/grants) take
 applications as markdown files submitted by pull request and reviewed
 in-repo — real prior art for *proposals in git with PR review*, but the
 artifact is narrative-only: no budget model, no funder rule packs, no
-machine validation of content.
+machine validation of content documented.
 
 [OSCAL and compliance-trestle](https://github.com/oscal-compass/compliance-trestle)
 are the strongest pattern-level prior art for C5: NIST schemas plus an
@@ -430,12 +456,8 @@ statutes into a verified DSL used with the French tax and benefits
 administrations, and the
 [Accord Project](https://docs.accordproject.org/docs/accordproject-slc.html)
 makes contracts computable — together legitimizing C3's premise that
-statute-to-code is a proven technique, which nobody has pointed at grant
-budgets. Scientific manuscripts routinely render and check in CI (Quarto's
-GitHub actions; Overleaf's git bridge), and policy-as-code engines such as
-OPA evaluate structured inputs in CI for infrastructure and, via OSCAL
-tooling, compliance data — with no application to grant forms or budgets
-found.
+statute-to-code is a proven technique; no application to grant budgets was
+found in this scan.
 
 The lane kills any claim that the *pattern* is new — trestle, Vale, and
 docassemble own it. All six claims therefore rest on the grant-domain
@@ -447,7 +469,7 @@ sweep found no occupants.
 Does any tool compute loaded personnel costs from rules rather than
 multipliers? Benchmarks turn out to be data products, and loading is either
 a flat multiplier (grant practice) or a rules-based calculation in payroll
-tools that never touches grant budgets and carries no benchmark provenance.
+tools that never touch grant budgets and carry no benchmark provenance.
 
 [Candid's Nonprofit Compensation Report](https://candid.org/nonprofit-compensation-report/)
 studies executive compensation from IRS 990s — the 2025 edition covers 217k
@@ -459,38 +481,34 @@ rebuttable-presumption-of-reasonableness documentation, and tracks
 compensation against department budgets — benchmarks and audit rationale, no
 statutory loading. [BLS OEWS](https://www.bls.gov/oes/) publishes wage
 percentiles for roughly 830 occupations at national, state, and metro levels
-— the standard citation for salary reasonableness in budget justifications,
-and the provenance substrate C3 consumes; BLS publishes data, not
-loaded-cost tooling. A genre of free
+— a provenance substrate C3 can consume; BLS publishes data, not loaded-cost
+tooling. A genre of free
 [true-cost-of-employee calculators](https://truetools.org/tools/employee-cost-calculator-usa)
 computes employer FICA, FUTA, and SUTA from published parameters — some
 [citing IRS Publication 15](https://jupid.com/payroll-tax-calculator) — plus
 rule-of-thumb benefit and overhead percentages: partial prior art for C3's
-computation, as throwaway web tools that handle no retirement-plan employer
+computation, as standalone web tools that handle no retirement-plan employer
 caps as law, carry no benchmark provenance, and feed no budget artifact.
-Production payroll engines — ADP, Gusto, et al. — compute actual employer
-burden from encoded tax law every pay run, proving C3's computation feasible
-and standard *post-hire*; no pre-award budgeting product surfaces it. And
-grant practice itself budgets personnel as salary times a pooled fringe rate
-— the Kuali and Cayuse mechanics above, NICRA culture — a multiplier
-everywhere.
+Grant practice itself budgets personnel as salary times a pooled fringe rate
+— the Kuali and Cayuse mechanics above — a configured multiplier.
 
 C3's parts all exist separately: benchmarks in Candid, ERI, and BLS;
-rules-based loading in payroll engines and calculators; multipliers as the
-incumbent. Composing them into a reproducible pre-award rate artifact with
-provenance is the unoccupied square.
+rules-based employer-tax calculation in web calculators; and pooled fringe
+rates in Kuali and Cayuse. Composing them into a reproducible pre-award rate
+artifact capable of carrying optional benchmark provenance is the unoccupied
+square.
 
 ## Adjacent fields
 
 Beyond the assigned lanes sit the closest conceptual neighbors — the ones a
 referee will raise.
 
-Government contracting solved structured cost buildup decades ago.
+Government contracting has long used structured cost buildup.
 [Deltek ProPricer](https://www.propricer.com/) — "refined through decades,"
 per the vendor — generates "compliant, submission-ready cost volumes" for
 CAS-, FAR-, and TINA-governed pricing from labor categories, reusable rate
-structures, and overhead and G&A indirects — the strongest C1 neighbor in
-any industry. The differences that keep C1 alive: closed; priced in
+structures, and overhead and G&A indirects — the strongest C1 neighbor found
+in this scan. The differences that keep C1 alive: closed; priced in
 labor-category hours, not work items with completion evidence; no
 cross-proposal allocation constraint; no CI or reproducibility story; wrap
 rates as pooled multipliers (the C3 contrast again).
@@ -499,10 +517,6 @@ reuses historical projects and actuals across proposals — "fast, auditable
 reuse," with AI-driven recall of similar past tasks: the
 nearest neighbor to C4's menu, with no co-funding fractions (GovCon prices
 one contract at a time), no sum-to-one gate, no funder-facing view.
-Construction estimating — RSMeans data, Gordian — has compiled priced
-work-item catalogs into bids for decades; the priced-menu-to-budget move is
-ancient there, and the grant-domain novelty is a menu carrying
-machine-checkable completion evidence and compiling under funder rule packs.
 
 On the philanthropy side, the
 [Philanthropy Data Commons](https://philanthropydatacommons.org/) is
@@ -515,10 +529,10 @@ profiles, not priced work items, with no budget or allocation semantics.
 — regional grantmaker associations, JustFund — are C4's inverse: N funders,
 one *form*, no org-side substrate, no fractions.
 [Braided-funding practice](https://ecbraiding.mathematica.org/) — the
-[HHS/ASPE toolkit](https://www.aspe.hhs.gov/sites/default/files/2021-08/EC_Braiding_Toolkit.pdf),
-Mathematica's early-childhood braiding tool, TFAH's compendium — is C2 and
-C4's conceptual ancestor in program finance: each funder pays its share, no
-double-charging, enforced by guides, spreadsheets, and humans.
+[HHS/ASPE toolkit](https://www.aspe.hhs.gov/sites/default/files/2021-08/EC_Braiding_Toolkit.pdf)
+and Mathematica's early-childhood braiding tool — is C2 and C4's conceptual
+ancestor in program finance: each funder pays its share, no double-charging,
+enforced by guides, spreadsheets, and humans.
 
 Three funder-facing surfaces frame C6.
 [DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Prices-in-the-shopping-portal)
@@ -533,129 +547,148 @@ keeps collective budgets transparent — "everyone can see where the money
 comes from and what it's spent on," per documentation the platform now
 banners as out of date — exposing recent transactions, balance, and totals
 raised and disbursed on the public page: live *actuals*, not a forward cost
-model, with no selection or toggle semantics. [Manifund](https://manifund.org/) runs open-source
-regranting with public projects, funding goals, a public grant ledger, and
+model, with no selection or toggle semantics. [Manifund](https://manifund.org/)
+runs public regranting with projects, funding goals, a grant ledger, and
 impact-certificate experiments — budgets as prose numbers, not models.
 
 ## Adjudication
 
-No lane produced an occupant of the full stack. Two claims lost their loose
-forms: C1's "computing budgets from data" is dead (Kuali, Cayuse, ProPricer,
-construction estimating), and C3's "computing employer burden from rules" is
-dead (payroll engines, web calculators); each survives only as stated — the
+No lane produced an occupant of the full stack. The adjudication is
+summarized in @tbl-verdicts. Two claims lost their loose forms: C1's
+"computing budgets from data" is dead (Kuali, Cayuse, ProPricer), and C3's
+"computing employer burden from rules" is dead (web calculators); each
+survives only as stated — the
 pure-function, work-item, CI-reproducible form of C1, and the composed,
-provenance-carrying, pre-award form of C3. C5 is repositioned rather than
-defended: its core — machine-encoded funder rules, automatic validation, a
+pre-award C3 form capable of carrying optional benchmark provenance. C5 is
+repositioned rather than defended: its core — machine-encoded funder rules,
+automatic validation, a
 structured error report — exists at scale in NIH ASSIST, and its pattern —
 versioned rule packs validated in CI — exists in compliance-trestle; the
-claim is the join, open and applicant-side and portable across funders. C2,
-C4, and C6 stand as novel in their mechanisms, each with named ancestors:
-the NIH overlap rule and effort certification for C2; BOE reuse, the
+claim is the join, open, applicant-controlled, local, and portable across
+funders. C2, C4, and C6 stand as novel in their mechanisms, each with named
+ancestors: the NIH overlap rule and effort reporting for C2; BOE reuse, the
 APD regime, and data commons for C4; vendor-priced project items and live
 ledgers for C6.
 
 | Claim | Verdict | Nearest neighbors |
 |---|---|---|
 | C1 budget as compiled artifact | Partial prior art | [Kuali Research budget engine](https://kuali-research.zendesk.com/hc/en-us/articles/115010656047-Proposal-Budget-Budget-Engine-Calculations) (rate-table autocalc; open-source ancestor frozen since 2017); [Deltek ProPricer](https://www.propricer.com/) (structured cost buildup) |
-| C2 pre-award double-billing gate | Novel as a machine check; the invariant is old policy | [NIH commitment-overlap rule](https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm), staff-resolved at award; [Huron ECC](https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview) post-award certification |
+| C2 pre-award over-allocation gate | Novel as a machine check; related anti-overlap policy is old | [NIH commitment-overlap rule](https://grants.nih.gov/grants/policy/nihgps/HTML5/section_2/2.5.1_just-in-time_procedures.htm), staff-resolved at award; [Huron ECC](https://finance.uw.edu/pafc/effort-reporting/ecc-system/ecc-overview) post-award reporting |
 | C3 rule-derived personnel rates | Partial prior art | [Payroll-tax calculators](https://jupid.com/payroll-tax-calculator) (rules-based loading, no provenance, post-hire); [pooled fringe rates](https://support.cayuse.com/hc/en-us/articles/115013737108-Adding-Fringe-Rates-and-Benefits-in-Proposals-S2S) (the incumbent) |
-| C4 funder-as-view | Novel as a mechanism; ancestors are copy-forward reuse | [BOEMax](https://www.projstream.com/basis-of-estimate-proposal-software-boemax) historical-estimate reuse; [Philanthropy Data Commons](https://philanthropydatacommons.org/) (one profile, many funders) |
-| C5 versioned funder packs + CI + status artifact | Exists (core, closed); partial (open, applicant-side packaging) | [NIH ASSIST](https://www.era.nih.gov/about-era/other-services/validations) business-rule validation; [compliance-trestle](https://github.com/oscal-compass/compliance-trestle) rule packs in git + CI |
+| C4 funder-as-view | Novel as a mechanism; ancestors reuse estimates or share profiles without fractional constraints | [BOEMax](https://www.projstream.com/basis-of-estimate-proposal-software-boemax) historical-estimate reuse; [Philanthropy Data Commons](https://philanthropydatacommons.org/) (one profile, many funders) |
+| C5 versioned funder packs + CI + status artifact | Exists (core, closed); partial (open, applicant-controlled packaging) | [NIH ASSIST](https://www.era.nih.gov/about-era/other-services/validations) business-rule validation; [compliance-trestle](https://github.com/oscal-compass/compliance-trestle) rule packs in git + CI |
 | C6 funder-facing configurator | Novel; thinnest neighbor set, adoption untested | [DonorsChoose](https://help.donorschoose.org/hc/en-us/articles/201936606-Prices-in-the-shopping-portal) vendor-priced project items; [Open Collective](https://docs.opencollective.com/help/collectives/budget) transparent budget and ledger |
 
-: Claim × verdict × nearest neighbor, from the 2026-08-14 sweep. {#tbl-verdicts}
+: Claim × verdict × nearest neighbor, from the August 2026 sweep
+(2026-08-14/15). {#tbl-verdicts}
 
 Two closing notes. The exact phrases "grants as code" and "CI for grants"
-were unclaimed as of the 2026-08 sweep — no tool, paper, or product uses
-either for grant applications, and the nearest live practice is
+had no prior grant-application use identified in the 2026-08 sweep; the
+nearest live practice found was
 [crypto grant programs run as markdown pull requests](https://github.com/w3f/Grants-Program).
 And the verdicts rest on absence of evidence in a US-centric,
 English-language sweep: *novel* means no prior art found, not proven absent.
 
 # The pipeline {#sec-pipeline}
 
-<!-- Reconciled 2026-08-14 against shipped v0.3 (grantkit feat/budget-model
-@ 9ff0a84: menu/{schema,engine,gates,render,loader}.py, docs/budget-model.md,
-docs/rates-contract.md) and the reference provider (eggnest-employer
-feat/rates-export: rates_export.py, taxes.py, retirement.py, README, emitted
-axiom-rates.yaml). Re-verify only if those branches change before
-publication. -->
+<!-- Reconciled 2026-08-15 through the latest committed state of the 0.3
+review branch (grantkit feat/budget-model @ f53da71:
+menu/{schema,engine,gates,render,loader}.py,
+tests/conftest.py, tests/test_{menu_engine,budget_cli}.py,
+docs/budget-model.md) and the reference provider (eggnest-employer
+feat/rates-export @ 52a0c6f: rates_export.py, taxes.py, retirement.py,
+README, emitted export). Concurrent, uncommitted solver work remained in the
+grantkit worktree; re-verify after it lands and before publication. -->
 
-grantkit 0.3 introduces the budget model: three YAML document types, a
-pure-function engine, a set of gates, and a new CLI verb, `budget`,
-alongside the existing pack verbs (`check` and `build` among them). The
-design keeps a strict engine/data boundary: grantkit ships the schemas, the
-engine, and synthetic fixtures; an organization's menus, rates, and
+The budget model is implemented on a review branch for the planned grantkit
+0.3 release: three YAML document types, a pure-function engine, a set of
+gates, and a new CLI verb, `budget`, alongside the existing pack verbs
+(`check` and `build` among them). The design keeps a strict engine/data
+boundary: 0.3 will ship the schemas and engine, while the review repository
+contains synthetic test fixtures; an organization's menus, rates, and
 selections live in the organization's own repositories. The budget path is
 stateless and local-first — no network calls, no model in the loop — and
-compilation is deterministic: the same inputs produce the same bytes, with
-money held as floats internally and rendered as whole dollars only at
-output.
+compilation is deterministic: saved Markdown and JSON artifacts are
+byte-identical for the same inputs. Money is held as floats internally;
+human-readable tables and Markdown render whole dollars, while JSON preserves
+the numeric values.
 
 ## Three documents
 
 **The menu** (`grantkit-menu/v0`) is the organization's priced work-item
-catalog. It carries org-level economics — in v0.3 a single overhead, the
-fiscal-sponsorship rate, with its provenance — and named unit costs, each a
-unit price with a derivation string and a provenance list. Every item has an
+catalog. It may carry org-level economics — in v0.3 a single overhead, the
+fiscal-sponsorship rate, with optional provenance — and named unit costs,
+each a unit price with optional derivation and provenance. Every item has an
 id; a type (free vocabulary, with recommended values program-coverage,
-platform, research-eval, field, and org-base); a title; a one-sentence
-statement of what it is; machine-checkable completion evidence; a status
-(shipped, in-flight, or planned); a dependency list whose ids must resolve;
-and a non-empty provenance list. An item's resourcing block prices it in any
+platform, research-eval, field, and org-base); a title; a short description
+of what it is; a required, non-empty completion-evidence field; a
+status (shipped, in-flight, or planned); a dependency list whose ids must
+resolve; and a non-empty provenance list. The engine validates the evidence
+field for presence; it does not verify completion or enforce that the named
+evidence is machine-checkable. An item's resourcing block prices it in any
 of five ways, at least one required: FTE-months by role (roles must exist in
 the rates file), unit counts (names must exist in the unit costs), flat
 contract dollars, recurring dollars per year (prorated over a selection's
 window), or a flat amount (the shape org-base blocks use). A flat or
 contract amount can declare `overhead_included: true`, meaning the amount
 already contains org overheads and the selection-level overhead must not
-apply again; the default is false. The flag exists because upstream org
-models emit fee-inclusive totals — @sec-case shows what happens without it.
+apply again; the default is false. The v0 schema tolerates unknown extension
+keys, so an optional-key typo is ignored rather than guessed: producers must
+spell `overhead_included` exactly or its false default remains in effect. The
+flag exists because upstream org models emit fee-inclusive totals —
+@sec-case shows what happens without it.
 
-**The rates file** (`grantkit-rates/v0`) is a contract with a rates
-provider, not a place to type numbers. It must name its provider and
-version, its generation date, and its currency, and may carry a scenario id,
-a jurisdiction, and a prose description of the method. Each role carries a
-required annual loaded cost, a recommended base, an optional SOC code, an
-optional component breakdown, and an optional benchmark. Every component
-states its basis from a closed vocabulary — computed (derived from encoded
-rules or data), configured (a scenario input someone chose), or assumed (a
-placeholder) — plus an optional source string; the benchmark block carries
-market provenance as a source, a percentile, and a dollar value, to which
-the reference provider adds the organization's own computed percentile
-against that market, in percent. grantkit validates presence and types; it
-does not recompute a provider's law-based numbers — that is the provider's
-job, under the provider's tests.
+**The rates file** (`grantkit-rates/v0`) is designed as a contract with a
+rates provider, although the schema cannot prevent hand-entered values. It
+must carry a non-empty provider identifier — conventionally a name and
+version — plus its generation date and currency, and may carry a scenario
+id, jurisdiction, and prose method. Each role carries a required annual
+`loaded_usd`, a recommended base, an optional SOC code, an optional component
+breakdown, and an optional benchmark. Every component states its basis from
+a closed vocabulary — computed (derived from encoded rules or data),
+configured (a scenario input someone chose), or assumed (a placeholder) —
+plus an optional source string. Benchmark source, percentile, and dollar
+value are each optional. The reference provider normally supplies all three
+and adds the organization's computed market percentile as a provider-specific
+extra; grantkit tolerates but does not render that extra. grantkit validates
+the rates document against its schema; it does not recompute a provider's
+law-based numbers — that is the provider's job, under the provider's tests.
 
-The reference provider, eggnest-employer, derives a role's loaded cost as
-the guaranteed employer cost: base salary, plus the employer retirement
-contribution, plus configured other compensation, plus employer payroll
-taxes computed from encoded law via policyengine-us — Social Security,
-Medicare, and federal unemployment among them. Bonus and equity are
-excluded from the guaranteed package, and health and other benefits are not
-modeled; the method paragraph in every export states the exclusion. Two
-precision caveats travel with the tax figures. The state unemployment rate
-is a state-average default parameter unless the scenario overrides it — not
-the organization's experience rate. And the New York MCTMT is computed on
-aggregate organizational payroll through the encoded bracket schedules,
-then allocated to roles pro rata, so per-role local-tax figures are an
-allocation, not a per-role legal calculation. The retirement cap is a
-modeling assumption stated as one: the provider computes the employer
-maximum as the IRS 415(c) annual-additions limit minus the 402(g) elective
-limit, both resolved from policyengine-us parameters — conservative, since
-the identity assumes the employee defers the full elective limit — and
-labels the component basis-computed, against basis-configured when a
-scenario fixes the amount or the cap instead. The same honesty governs
-degradation: the employer-side payroll variables live on an unmerged
-policyengine-us fork branch today, and against a stock install the provider
-computes Social Security and Medicare only, emitting an explicit warning
-and a method-paragraph sentence saying so — the fallback never passes
+The reference provider, eggnest-employer, defines a role's `loaded_usd` as
+modeled guaranteed employer cost: base salary, plus employer retirement,
+plus configured other compensation, plus employer payroll taxes when an
+employer tax state is configured. The taxes are computed from encoded rules
+via policyengine-us — Social Security and Medicare, plus unemployment and
+local payroll taxes when the installed variables are available. Bonus and
+equity are excluded from the guaranteed package, and health and other
+benefits are not modeled; every export's method paragraph states those
+exclusions. Two implementation caveats matter when interpreting the optional
+tax figures.
+State unemployment uses an encoded model default — a statewide new-employer
+rate where available, otherwise a reported average — and is therefore not
+necessarily the organization's experience rate. When aggregate-local mode is
+configured, the provider computes scenario-level local payroll tax, including
+New York MCTMT, on aggregate organizational payroll through the encoded
+bracket schedules. It then uses a payroll-tax-gross-wage-weighted adjustment
+to reconcile the per-role local estimates to that total, so the resulting
+per-role local-tax figures are allocations rather than per-role legal
+calculations. When the scenario selects the statutory cap
+source, the provider constructs an employer retirement ceiling as the IRS
+415(c) annual-additions limit minus the 402(g) elective limit, both resolved
+from policyengine-us parameters. It states this as a conservative modeling
+assumption, because the identity assumes the employee defers the full
+elective limit, and labels that component basis-computed; a scenario-fixed
+amount or cap is basis-configured. If an employer tax state is absent, or if
+an installed PolicyEngine-US build lacks optional employer-side variables,
+the provider records the omission in the role or method and, for the
+variable fallback, emits a `RuntimeWarning`; degradation never passes
 silently.
 
-Two advisory warnings police the seam. A load-factor check flags any role
-whose loaded-to-base ratio falls below 1.05 ("loaded equals base — pasted
-base as loaded?") or above 2.0 — a bug class observed in the wild, when
-three roles in a seeded menu carried base salary pasted as loaded cost. A
+Two advisory warnings police the seam for roles with a positive base. A
+load-factor check flags any role whose loaded-to-base ratio falls below 1.05
+("loaded is barely above base (pasted base as loaded?)") or above 2.0 — a
+bug class observed in the wild, when three roles in a seeded menu carried
+base salary pasted as loaded cost. When a component breakdown is present, a
 components check flags any breakdown that misses the stated loaded cost by
 more than a dollar.
 
@@ -666,8 +699,8 @@ org-base allocation (an item that must be of type org-base, with a fraction
 between zero and one), and an ordered list of selected items, each with a
 co-funding fraction. Explicit zero fractions are preserved and meaningful:
 an item selected at fraction 0.0 — optionally with a note — is *declared,
-not billed*: the funder sees that the work exists in the plan and that this
-proposal pays none of it.
+not allocated here*: the funder sees that the work exists in the plan and
+that this proposal pays none of it.
 
 A portfolio directory holds the menu, the rates file, and a `selections/`
 directory of proposals (a single selection file beside the menu also works
@@ -689,33 +722,41 @@ blocks, matching upstream practice; overhead applies the org's rate to every
 component except those whose amount came from a field flagged
 `overhead_included`, which makes the fee idempotent by construction; the
 total is work plus base plus overhead, and when the selection declares a
-target, the compilation reports fit as total over target.
+positive target, the compilation reports fit as total over target.
 
 ## The gates
 
 `grantkit budget --check` runs the integrity gates over a whole portfolio
-and exits nonzero on errors (1 for findings, 2 for an unreadable
-portfolio). The errors: schema violations in any of the three documents;
-references that do not resolve — a selection naming a missing item, an item
+and exits nonzero on errors: 1 when error findings are reported, and 2 when the
+command's usage, project binding, portfolio, or requested selection cannot be
+resolved. The integrity errors include schema violations in any of the three
+documents; a mismatch
+between the menu and rates currencies; duplicate selection ids; references
+that do not resolve — a selection naming a missing item, an item
 naming a missing role or unit, a dependency naming a missing item;
 dependency cycles, found by depth-first search in deterministic order;
 fractions outside zero to one; an org-base reference to an item that is not
-of type org-base; the same item listed twice in one selection; and the C2
-gate, `cofunding_over_allocated`, which for every item sums fractions
-across all selections with status live or awarded and fails if the sum
+of type org-base; the same item listed twice in one selection's ordered item
+list; and the C2 gate, `cofunding_over_allocated`, which for every item sums
+fractions across all selections with status live or awarded and fails if the sum
 exceeds one (with a 1e-9 tolerance), naming each contributing selection and
 its fraction in the message. Org-base fractions count toward the same
 per-item sums, labeled as org-base contributions in the finding. Draft,
 withdrawn, and declined selections are excluded
-by design: the invariant binds simultaneous live applications, drafts are
-free to over-plan, and the gate fires when they go live.
+by design: drafts are free to over-plan, and the gate fires when they enter
+live status. In v0.3, status is the concurrency proxy: the gate
+conservatively treats every live or awarded selection as overlapping because
+the schema carries a window length but no start date, end date, or completed
+status. It does not infer temporal overlap.
 
-The warnings: a funded item depends on work that is neither shipped,
+The warnings: a selected work item depends on work that is neither shipped,
 in-flight, funded in any live or awarded selection, nor funded by the
 selection itself — the proposal assumes work nobody has funded; the
-compiled total exceeds the declared target (advisory — a target is an ask,
-not a cap); and the rates-contract heuristics above. Inside a grant project
-bound to a selection, the funder pack's total cap also applies to the
+compiled total exceeds a positive declared target (advisory — a target is an
+ask, not a cap); and the rates-contract heuristics above. Inside a grant
+project bound to a selection, if the funder pack declares a total or annual
+cap, a currency mismatch is an error because grantkit does not convert
+currencies. When currencies match, the pack's total cap applies to the
 compiled total as an error, reusing the existing cap identifier; the annual
 cap — approximated as total times twelve over the window months, a
 uniform-spread approximation — is checked as a warning.
@@ -724,14 +765,17 @@ uniform-spread approximation — is checked as a warning.
 
 `grantkit budget` prints the compilation as tables: per-item costs,
 per-role personnel, and a category summary. `--json` emits the full
-structured compilation. `--output` writes a markdown budget document: a header stating
-the selection, funder, window, status, and a generated-from line naming the
-menu and the rates provider, version, and date — the reproducibility
-statement; a selected-items table with fractions, item costs, and funded
-shares; a personnel table with fraction-weighted FTE-months, loaded annual
-rates, and a benchmark column when the rates carry benchmarks; and a
-category summary — labor, units, contract, flat, recurring prorated, org
-base, overhead, total — with a target-fit line. `--narrative` appends a
+structured compilation. `--output` writes a markdown budget document: a
+header stating the selection, funder, window, and status; a generated-from
+line reporting the menu schema and currency and the rates-provider
+identifier and generation date, plus a scenario when present; a
+selected-items table with fractions, item costs, and funded shares; a
+personnel table with fraction-weighted FTE-months, loaded annual rates, and a
+benchmark column when at least one selected role has a benchmark source; and
+a category summary showing the nonzero categories drawn from labor, units,
+contract, flat, recurring prorated, org base, and overhead, followed by the
+total and a target-fit line when the target is positive. The generated-from
+line is provenance metadata, not an input hash. `--narrative` appends a
 narrative skeleton: for each funded item, its title, what it is, its
 completion evidence, and its cost line; then a budget-justification
 skeleton per role, with a benchmark-provenance sentence where present. The
@@ -740,103 +784,173 @@ beyond connective boilerplate.
 
 ## Continuous integration
 
-A repository that holds a portfolio, or a grant project bound to a
-selection, runs `grantkit check` and `grantkit budget` in CI. Inside a
-bound project, the selection gates and funder caps fold into the same
-findings stream and exit-code semantics the pack checks already use, so an
-application repo fails to build when its budget breaks an invariant exactly
-as it fails when a required section is missing. Determinism makes the diff
-meaningful: a changed rate or fraction shows up as a changed table and
-nothing else. The C2 invariant re-verifies on every push — including pushes
-that edit *other* proposals, which is the point: the gate binds the
-portfolio, not the file being edited. The funder sees the same numbers the
-org plans by.
+When CI is configured, a portfolio repository runs `grantkit budget --check`;
+a grant project bound to a selection through `grant.yaml` can also run
+`grantkit check`, which folds the selection gates and funder caps into the
+pack-check findings stream and exit-code semantics. A broken invariant then
+fails the CI check just as a missing required section does. When an output is
+regenerated, a changed rate or fraction used by that selection produces a
+narrow derived-table diff. `--check` does not itself compare a saved output,
+so CI that requires artifact freshness needs a separate regeneration-and-diff
+step. The C2 rule re-verifies on every schema-valid portfolio check, including
+checks after edits to other proposals, because it binds the loaded portfolio
+rather than only the file being edited. A regenerated artifact can be shared
+with the funder from the same inputs the organization uses for planning.
 
-The pipeline demonstrates C1 on itself. The test suite compiles a synthetic
-portfolio — three roles (one with a full component breakdown and benchmark,
-one base-only, one loaded-only), six items (an org-base block with overhead
-included, a unit-priced item, a recurring item, a dependency chain, a
-shipped item), and three selections (two live selections sharing an item at
-0.5 each, and a draft over-planner carrying an explicit-zero declaration) —
-and asserts that two runs produce identical compiled output. The fixture
-ships with the package, so the compilation and gates this section describes
-reproduce end to end without private data; the reference provider's own
-computation does not, until its release (@sec-availability). The
-configurator (C6) is designed as a surface over the same compiled objects —
-presets and toggles over compiled selections — and has not shipped in v0.3;
-the scenario pressure-testing in @sec-case ran by recompiling the model,
-not through a funder-facing interface.
+The review repository's test suite compiles a synthetic portfolio — three
+roles (one with a full component breakdown and benchmark, one base-only, one
+loaded-only), six items (including a fee-inclusive org-base block, units,
+recurring cost, a dependency chain, and shipped work), and three selections
+(two live selections sharing an item at 0.5 each, and a draft over-planner
+carrying an explicit-zero declaration). The tests assert the arithmetic and
+byte-identical Markdown from repeated runs. For a one-selection reproduction,
+the following category summary was generated directly by the 0.3 review
+branch's `budget` verb from those synthetic input shapes:
+
+<!-- Generated artifact command (exact):
+/Users/maxghenis/GrantKit/grantkit-v03/.venv/bin/python -m grantkit.cli budget /private/tmp/grantkit-paper-fixture.nmG4B8 --output /private/tmp/grantkit-paper-fixture.nmG4B8/budget.md
+Source: grantkit feat/budget-model @ 490494c; tests/conftest.py synthetic
+menu/rates shapes plus sel-live-a as the sole selection.
+Publication checklist: wire quarto execution so this regenerates at render
+time before publication.
+-->
+
+| Category | Amount |
+|---|---:|
+| Labor | USD 104,375 |
+| Units | USD 12,500 |
+| Org base | USD 120,000 |
+| Overhead (7%) | USD 8,181 |
+| **Total** | **USD 245,056** |
+
+Target fit is 49% of the synthetic USD 500,000 target. This table is static
+in the present paper source: rendering the paper does not rerun the command.
+It exercises compilation over a synthetic rates file, not the private
+reference provider's computation (@sec-availability). The proposed
+configurator (C6) would be a surface over the same compiled objects — presets
+and toggles over compiled selections — but is not part of the current 0.3
+review branch. The scenario pressure-testing in @sec-case ran by recompiling
+the model, not through a funder-facing interface.
 
 # Case study {#sec-case}
 
 <!-- Reconcile pass: every figure in this section re-verifies against
 ballmer-proposal-2026 PR #17 / CAMPAIGN.md before publication. -->
 
-The pipeline's first live run was an August 2026 diligence sprint at The
-Axiom Foundation, presented here with funders unnamed. The substrate was one
-rates scenario plus a menu of 25 priced items — 22 work items and three
-fee-inclusive org-base blocks — seeded from the sprint's diligence corpus.
-Figures are from the sprint's working records.
+The pipeline's first run on organization data was an August 2026
+diligence sprint at The Axiom Foundation, presented here with funders
+unnamed. The substrate was one configured rates file plus a menu of 25 priced
+items — 22 work items and three fee-inclusive org-base blocks — seeded from
+the sprint's diligence corpus. The rates were planning figures pending
+replacement by a reference-provider export, so this case does not demonstrate
+C3's rule-derived computation. Figures are from the sprint's working records.
 
-In one evening, a bottoms-up org model derived four coherent org shapes —
-$21.2 million to $37.8 million over five years — from the sprint's shared
-role rates and receipt-grade unit costs. Each shape is a configuration of
-the same model, so a changed rate or assumption regenerates all four
-together; fee-inclusive org-cost blocks from that model became the menu's
-org-base items, which selections claim fractionally. The same substrate
-then priced a $2 million concept note, and the first selection came out at
-134% of target — a 34% overshoot exposed before submission, so the trim is
-a decision made in the org's own repository rather than in a funder's
-diligence. And it expressed a three-level funder structure as funder-level
-presets over the same menu — the bottom and top levels as selections: the
-same items, different fractions and windows, consistent by construction.
+During the sprint, a bottoms-up org model derived four org shapes — $21.2
+million to $37.8 million over five years — from shared role rates and
+documented unit costs. Each shape is a configuration of the same model, so a
+changed rate or assumption regenerates all four together; fee-inclusive
+org-cost blocks from that model became the menu's org-base items, which
+selections claim fractionally. The ad-hoc pricer's first pass on a $2 million
+concept note printed 134% of target; the typed compilation printed
+$2,578,998.57, or 129.0% — exposing a $99,750 fee double-application, about
+five percentage points, and a real roughly 29-point overshoot, both before
+submission. The remaining scope is a trim decision in the organization's
+repository. The model also represented the bottom and top of a three-level
+funder structure as distinct selections over the same menu, with different
+item sets and org-base blocks.
 
-The compilation also surfaced a decision the spreadsheet workflow had
-buried. One leadership pricing question — a levy versus a full-price
-posture for attestation — had sat implicit for weeks; pricing the menu
-forced it into the open, as a choice the organization had to make rather
-than a number that varied with whichever spreadsheet was open.
+The compilation also exposed an unresolved pricing decision recorded in the
+source model: a levy versus a full-price posture for attestation. Pricing the
+menu represented that decision as an explicit organizational choice rather
+than leaving it implicit in a budget total.
 
 One discovery is worth stating mechanically, because it is the shape of
 error this compilation catches. An upstream org-cost block already carried
 a 7% fiscal-sponsorship fee inside its total. An ad-hoc pricer multiplied
-that block by 1.07 again. In the typed substrate, the block is a flat
-amount with `overhead_included: true`, so the engine exempts it from
-selection-level overhead and the fee applies exactly once, by construction.
-Porting the model removed a $99,750 phantom and moved one live view from
-134% to 129% of its target. The remaining overshoot was real scope to trim,
-not arithmetic — a distinction a hand-built budget cannot make about
-itself.
+that block by 1.07 again. In the typed substrate, the block is a flat amount
+with the recognized field `overhead_included: true`, so the engine exempts it
+from selection-level overhead and the fee applies exactly once for that
+input.
+Porting the model removed the $99,750 phantom from the concept-note view and
+moved it from 134% to 129% of its target. The remaining overshoot was priced
+scope, not the duplicated fee — a distinction the ad-hoc pricer had obscured.
 
 # What this does not solve {#sec-limits}
 
-The pipeline does not write the proposal. Narrative quality is untouched:
-the prose is still written, by people or by models; the pipeline only
-guarantees that the prose sits on true numbers. Relationship work is
-untouched. The menu can be gamed by its own organization — garbage items
-in, plausible budget out; the gates check consistency, not wisdom. Funder
-adoption of configurators is untested beyond the one live diligence in
-@sec-case. Rule-derived rates currently cover United States federal and
-state payroll and retirement law only. And mechanically, v0.3 prorates
-recurring costs over a single window — no multi-year phasing — and assumes
-single-currency portfolios.
+The pipeline does not write the proposal. Narrative quality and relationship
+work are untouched; the system establishes numbers consistent with the
+declared inputs and model, not their truth, completeness, reasonableness, or
+external billing. The menu, rates, and fractions can be wrong or incomplete,
+and the completion-evidence field is required data rather than a verification
+of completed work. Formula spreadsheets can also implement deterministic
+arithmetic; the claimed advantage here is inspectable schema/data separation,
+textual diffs, headless checks, and portfolio-wide constraints.
+
+The over-allocation gate sees only selections loaded in one portfolio and
+trusts their item identities, fractions, and statuses. It cannot detect an
+omitted off-repository proposal or two semantically duplicate items with
+different ids. It also treats every live and awarded selection as
+simultaneous: v0.3 has a window length but no calendar dates or completed
+award status. Marking a proposal live before sending it is a workflow
+convention, not an enforced submission integration.
+
+Funder adoption of configurators is untested; the diligence in @sec-case
+pressure-tested scenarios by recompiling the model, without a funder-facing
+interface. The case used configured planning rates rather than a
+reference-provider export. That provider covers federal and supported
+state/local employer-payroll rules when configured, plus the stated
+retirement-cap scenario; omissions are recorded, and the optional-variable
+fallback also emits a warning. Funder packs likewise depend on maintainers to
+keep rules current, and an authoritative submission portal remains the final
+check. Mechanically,
+v0.3 prorates recurring costs over a single window — no multi-year phasing —
+and assumes single-currency portfolios.
+
+The novelty is also bounded as adjudicated in @sec-landscape: budget
+compilation and rule-derived rates are partially anticipated by rate-table
+engines and payroll calculators, while the core of automated funder-rule
+validation already runs at scale, closed, in NIH ASSIST. The claims are the
+precise C1 and C3 compositions, the C2 and C4 mechanisms, the proposed C6
+surface, and C5's open, applicant-controlled packaging — not those looser
+forms.
+
+# Discussion and conclusion {#sec-conclusion}
+
+The landscape scan narrows the contribution more than it expands it. C1 and
+C3 retain only their precise, composed forms; C5 retains an open,
+local, funder-portable packaging around a validation core that already
+exists; and C2, C4, and C6 are absence-of-prior-art findings under the scan's
+stated scope. The implemented review branch demonstrates compilation,
+portfolio selections, and the status-based allocation gate. It does not yet
+demonstrate a released 0.3 package, public end-to-end reference-rate
+generation, a funder-facing configurator, or organizational use beyond one
+private case.
+
+In that case, typed compilation separated a $99,750 duplicated fee from the
+remaining priced scope and made a pricing-policy choice explicit. That is
+evidence of one detected arithmetic error, not an estimate of general error
+rates or effectiveness. The narrower thesis survives: versioned inputs,
+deterministic compilation, and explicit checks can make proposal budgets
+reproducible and reviewable before submission. Whether organizations and
+funders adopt the workflow, and whether it improves outcomes, remain
+empirical questions.
 
 # Availability {#sec-availability}
 
-<!-- MAX DECISION (pre-publication): eggnest-employer is a PRIVATE repo as
-of 2026-08-14, so "all components are open source" would be false. Either
-publish eggnest-employer before this paper ships or keep the softened
-wording below ("public release is pending"); the abstract claims only the
-engine and schemas as open source for the same reason. Org data repos
-(menus, selections) are also private and stay that way; the synthetic
-fixture is the public reproduction path. -->
+<!-- PUBLICATION GATE (2026-08-15): release grantkit 0.3 to PyPI before
+submission, then change the future-tense paragraph below. eggnest-employer is
+PRIVATE today: publish it or retain/reword every private-provider caveat.
+Organization data repositories remain private. The synthetic fixture lives
+in the review repository's tests, not in the current 0.2.x wheel; do not call
+it packaged unless 0.3 packaging changes. -->
 
-grantkit is on PyPI under the MIT license; the menu, rates, and selection
-schemas and the budget engine ship with it, along with the synthetic
-fixture portfolio, so the compilation demonstrated here reproduces end to
-end without private data. The reference rates provider, eggnest-employer,
-is not yet public; its release is pending. Organization menus and
-selections live in organization repositories and remain private — the
-case-study figures in @sec-case come from those records, and the mechanics
-they exercise are the same ones the fixture exercises in the open. The
-paper itself will be embedded at grantkit.io once public.
+grantkit 0.2.x is available on PyPI today under the MIT license. The menu,
+rates, and selection schemas and the budget engine described here are
+implemented on the review branch for the companion 0.3 release; they are not
+in the current PyPI release. The review repository's test suite contains the
+synthetic fixture used above, but the current 0.2.x PyPI distribution does not
+ship that fixture. The reference rates provider, eggnest-employer, is not yet
+public; its release is pending. Organization menus and selections remain in
+private organization repositories. The case-study figures in @sec-case come
+from those records; the synthetic compilation demonstrates the engine path
+without reproducing the private provider or case data.
