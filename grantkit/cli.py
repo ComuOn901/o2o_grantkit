@@ -24,11 +24,12 @@ from typing import Optional
 import click
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from . import __version__
 from .core.builder import BuildDependencyError, build_project
 from .core.checks import CheckResult, run_checks
-from .core.project import GrantProject
+from .core.project import GrantProject, GrantProjectError
 from .core.review import build_review
 from .core.scaffold import ScaffoldError, init_project
 from .core.status import build_status, days_until_deadline, write_status
@@ -54,6 +55,22 @@ PATH_ARG = click.argument(
 )
 
 
+def _terminal_text(value: object, *, style: Optional[str] = None) -> Text:
+    """Build Rich text that remains encodable for hostile YAML strings."""
+    safe = str(value).encode("utf-8", "backslashreplace").decode("utf-8")
+    escaped: list[str] = []
+    for char in safe:
+        codepoint = ord(char)
+        if char in "\n\t" or not (codepoint < 32 or 0x7F <= codepoint <= 0x9F):
+            escaped.append(char)
+        elif codepoint <= 0xFF:
+            escaped.append(f"\\x{codepoint:02x}")
+        else:  # pragma: no cover - C1 controls are all <= 0xff
+            escaped.append(f"\\u{codepoint:04x}")
+    payload = "".join(escaped)
+    return Text(payload, style=style) if style is not None else Text(payload)
+
+
 def _load_project(path: Path) -> GrantProject:
     grant_yaml = Path(path) / "grant.yaml"
     if not grant_yaml.exists():
@@ -62,7 +79,11 @@ def _load_project(path: Path) -> GrantProject:
             "Run [bold]grantkit init[/bold] to scaffold one."
         )
         raise SystemExit(2)
-    return GrantProject(Path(path))
+    try:
+        return GrantProject(Path(path))
+    except GrantProjectError as exc:
+        err_console.print(_terminal_text(exc, style="red"))
+        raise SystemExit(2)
 
 
 @click.group()
@@ -155,10 +176,10 @@ def _print_checks(result: CheckResult) -> None:
     for item in result.items:
         color = "red" if item.level == "error" else "yellow"
         table.add_row(
-            f"[{color}]{item.level}[/{color}]",
-            item.rule,
-            item.section or "-",
-            item.message,
+            _terminal_text(item.level, style=color),
+            _terminal_text(item.rule),
+            _terminal_text(item.section or "-"),
+            _terminal_text(item.message),
         )
     console.print(table)
     console.print(
@@ -314,8 +335,8 @@ def _print_status(project: GrantProject) -> None:
     "selection_id",
     default=None,
     help=(
-        "Selection id to compile (required for multi-selection "
-        "portfolios unless the path is a grant project bound to one)."
+        "Selection id to compile, or to scope --check. Required to compile "
+        "a multi-selection portfolio unless a grant project binds one."
     ),
 )
 @click.option(
@@ -323,8 +344,8 @@ def _print_status(project: GrantProject) -> None:
     "check_only",
     is_flag=True,
     help=(
-        "Run the integrity gates only; exit 1 on errors (2 on an "
-        "unreadable portfolio)."
+        "Run the integrity gates only; exit 1 on errors (2 on selection, "
+        "configuration, or loading failures)."
     ),
 )
 @click.option(
@@ -401,7 +422,13 @@ def budget(
         raise SystemExit(1)
     for item in result.items:
         err_console.print(
-            f"[yellow]warning[/yellow] {item.rule}: {item.message}"
+            Text.assemble(
+                ("warning", "yellow"),
+                " ",
+                _terminal_text(item.rule),
+                ": ",
+                _terminal_text(item.message),
+            )
         )
 
     cost = selection_cost(selection, portfolio)
@@ -413,12 +440,16 @@ def budget(
             Path(output).write_text(payload, encoding="utf-8")
         except OSError as exc:
             err_console.print(
-                f"[red]Could not write budget document to {output}: "
-                f"{exc}[/red]"
+                _terminal_text(
+                    f"Could not write budget document to {output}: {exc}",
+                    style="red",
+                )
             )
             raise SystemExit(2)
         destination = err_console if as_json else console
-        destination.print(f"[green]Wrote budget document to {output}[/green]")
+        destination.print(
+            _terminal_text(f"Wrote budget document to {output}", style="green")
+        )
     if as_json:
         payload_json = budget_json(portfolio, selection, cost)
         sys.stdout.write(
@@ -442,29 +473,55 @@ def _load_portfolio_target(
     """
     pack = None
     portfolio_dir = Path(path)
+    bound_project = False
     if (Path(path) / "grant.yaml").exists():
-        project = GrantProject(Path(path))
+        bound_project = True
+        project = _load_project(Path(path))
         binding = project.budget_model
-        if not binding or not binding.get("portfolio"):
+        portfolio_value = binding.get("portfolio") if binding else None
+        if not isinstance(portfolio_value, str) or not portfolio_value:
             err_console.print(
-                f"[red]{project.grant_yaml_path} has no budget_model "
-                "binding.[/red]\nAdd one:\n\n"
-                "  budget_model:\n"
-                "    portfolio: ../org-portfolio\n"
-                "    selection: my-proposal\n\n"
-                "or point grantkit budget at a portfolio directory."
+                _terminal_text(
+                    f"{project.grant_yaml_path} has no valid budget_model "
+                    "portfolio binding.\nAdd one:\n\n"
+                    "  budget_model:\n"
+                    "    portfolio: ../org-portfolio\n"
+                    "    selection: my-proposal\n\n"
+                    "or point grantkit budget at a portfolio directory.",
+                    style="red",
+                )
             )
             raise SystemExit(2)
-        portfolio_dir = (project.root / str(binding["portfolio"])).resolve()
+        try:
+            portfolio_dir = (project.root / portfolio_value).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            err_console.print(
+                _terminal_text(
+                    f"Could not resolve the bound portfolio: {exc}",
+                    style="red",
+                )
+            )
+            raise SystemExit(2)
+        assert binding is not None
         if selection_id is None:
             bound = binding.get("selection")
-            selection_id = str(bound) if bound is not None else None
+            if bound is not None and not isinstance(bound, str):
+                err_console.print(
+                    _terminal_text(
+                        "budget_model.selection must be a string id.",
+                        style="red",
+                    )
+                )
+                raise SystemExit(2)
+            selection_id = bound
         pack = project.pack
     try:
         portfolio = load_portfolio(portfolio_dir)
     except PortfolioError as exc:
-        err_console.print(f"[red]{exc}[/red]")
+        err_console.print(_terminal_text(exc, style="red"))
         raise SystemExit(2)
+    if bound_project and selection_id is None:
+        selection_id = _resolve_selection(portfolio, None).id
     return portfolio, selection_id, pack
 
 
@@ -484,17 +541,23 @@ def _resolve_selection(
             return portfolio.selections[0]
         available = ", ".join(portfolio.selection_ids) or "(none)"
         err_console.print(
-            "[red]This portfolio has "
-            f"{len(portfolio.selections)} selections; pass "
-            f"--selection ID.[/red]\nAvailable: {available}"
+            _terminal_text(
+                "This portfolio has "
+                f"{len(portfolio.selections)} selections; pass "
+                f"--selection ID.\nAvailable: {available}",
+                style="red",
+            )
         )
         raise SystemExit(2)
     selection = portfolio.get_selection(selection_id)
     if selection is None:
         available = ", ".join(portfolio.selection_ids) or "(none)"
         err_console.print(
-            f"[red]No selection '{selection_id}' in this portfolio."
-            f"[/red]\nAvailable: {available}"
+            _terminal_text(
+                f"No selection '{selection_id}' in this portfolio.\n"
+                f"Available: {available}",
+                style="red",
+            )
         )
         raise SystemExit(2)
     return selection

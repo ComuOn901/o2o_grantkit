@@ -9,19 +9,23 @@ A **portfolio directory** holds the three budget-model documents:
 
 :func:`load_portfolio` reads the directory into a :class:`Portfolio`. Loading
 is lenient by design: it fails (with :class:`PortfolioError`) only when a
-required file is missing or a document is not parseable YAML. Everything else
-— schema violations, dangling references, over-allocation — is reported by
-:func:`grantkit.menu.gates.run_gates`, so the CLI can print findings instead
-of a stack trace.
+required path is missing, a document cannot be read as an unambiguous YAML
+mapping, or the reserved ``selections`` path is not a directory. Everything
+else — schema violations, dangling references, over-allocation — is reported
+by :func:`grantkit.menu.gates.run_gates`, so the CLI can print findings
+instead of a stack trace.
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from yaml.constructor import ConstructorError
 
 from .schema import Menu, Rates, Selection
 
@@ -30,11 +34,81 @@ class PortfolioError(Exception):
     """A portfolio directory could not be read at all."""
 
 
+_MERGE_KEY = object()
+_NAN_KEY = object()
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """SafeLoader variant that rejects duplicate mapping keys.
+
+    Checking each mapping before SafeLoader expands YAML merge keys preserves
+    the standard ``<<: *defaults`` override behavior while rejecting direct
+    duplicate keys that PyYAML would otherwise resolve by keeping the last.
+    """
+
+    def __init__(self, stream: Any) -> None:
+        super().__init__(stream)
+        self._duplicate_checked: set[int] = set()
+
+    def flatten_mapping(self, node: Any) -> None:
+        identity = id(node)
+        if identity not in self._duplicate_checked:
+            self._duplicate_checked.add(identity)
+            seen: set[Any] = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    key: Any = _MERGE_KEY
+                elif key_node.tag == "tag:yaml.org,2002:value":
+                    key = key_node.value
+                else:
+                    key = self.construct_object(key_node, deep=True)
+                if isinstance(key, float) and math.isnan(key):
+                    key = _NAN_KEY
+                if not isinstance(key, Hashable):
+                    raise ConstructorError(
+                        "while constructing a mapping",
+                        node.start_mark,
+                        "found unhashable key",
+                        key_node.start_mark,
+                    )
+                if key in seen:
+                    raise ConstructorError(
+                        "while constructing a mapping",
+                        node.start_mark,
+                        f"found duplicate key ({key_node.value!r})",
+                        key_node.start_mark,
+                    )
+                seen.add(key)
+        super().flatten_mapping(node)
+
+
+def _safe_load_unique(stream: Any) -> Any:
+    """Load untrusted YAML with SafeLoader plus duplicate-key rejection."""
+    loader = _UniqueKeySafeLoader(stream)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
+
 def _read_yaml_mapping(path: Path) -> dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = _safe_load_unique(f)
     except yaml.YAMLError as exc:
+        raise PortfolioError(f"Could not parse {path.name}: {exc}") from exc
+    except RecursionError as exc:
+        raise PortfolioError(
+            f"Could not parse {path.name}: document nesting is too deep"
+        ) from exc
+    except (OSError, UnicodeError) as exc:
+        raise PortfolioError(f"Could not read {path.name}: {exc}") from exc
+    except MemoryError:
+        raise
+    except Exception as exc:
+        # Some PyYAML scalar constructors leak ValueError/AttributeError for
+        # hostile values instead of wrapping them in YAMLError. This is the
+        # parser trust boundary, so normalize those failures for callers.
         raise PortfolioError(f"Could not parse {path.name}: {exc}") from exc
     if data is None:
         return {}
@@ -71,12 +145,13 @@ class Portfolio:
         return None
 
 
-def load_portfolio(path: Path) -> Portfolio:
+def load_portfolio(path: str | Path) -> Portfolio:
     """Load a portfolio directory into a :class:`Portfolio`.
 
     Raises:
-        PortfolioError: if the directory, ``menu.yaml``, or ``rates.yaml``
-            is missing, or any document is unparseable YAML.
+        PortfolioError: if a required path is missing, a document is not a
+            readable, unambiguous YAML mapping, or ``selections`` exists but
+            is not a directory.
     """
     root = Path(path)
     if not root.is_dir():
@@ -97,6 +172,10 @@ def load_portfolio(path: Path) -> Portfolio:
     if single.exists():
         selection_paths.append(single)
     selections_dir = root / "selections"
+    if selections_dir.exists() and not selections_dir.is_dir():
+        raise PortfolioError(
+            f"Expected selections to be a directory: {selections_dir}"
+        )
     if selections_dir.is_dir():
         selection_paths.extend(sorted(selections_dir.glob("*.yaml")))
 

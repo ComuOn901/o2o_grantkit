@@ -32,7 +32,7 @@ def test_budget_prints_rich_tables(make_portfolio):
     assert "Synthetic Fund A" in result.output
     assert "245,056" in result.output  # rounded total
     assert "Overhead" in result.output
-    assert "49%" in result.output  # target fit
+    assert "49.01%" in result.output  # precise target fit
 
 
 def test_budget_json_structure(make_portfolio):
@@ -249,6 +249,70 @@ def test_budget_json_reports_gate_errors_as_json(
     assert "Cannot compile" in result.stderr
 
 
+def test_budget_json_reports_derived_overflow_as_a_finding(
+    make_portfolio, portfolio_menu
+):
+    portfolio_menu["unit_costs"]["module"]["usd_per_unit"] = 1e308
+    portfolio_menu["items"][3]["resourcing"]["units"]["module"] = 1e308
+    result = _invoke(
+        "--selection",
+        "sel-live-a",
+        "--json",
+        make_portfolio(menu=portfolio_menu),
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert any(
+        item["rule"] == "budget_non_finite" for item in payload["items"]
+    )
+    assert "NaN" not in result.stdout
+    assert "Infinity" not in result.stdout
+
+
+def test_budget_check_renders_hostile_finding_text_literally(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"].append(
+        {"item": "[/red]", "fraction": 0.1}
+    )
+    result = _invoke(
+        "--check", make_portfolio(selections=portfolio_selections)
+    )
+    assert result.exit_code == 1
+    assert "[/red]" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_budget_check_escapes_unencodable_yaml_text(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"][0] = {
+        "item": "\ud800",
+        "fraction": "half",
+    }
+    result = _invoke(
+        "--check", make_portfolio(selections=portfolio_selections)
+    )
+    assert result.exit_code == 1
+    assert "\\ud800" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_budget_check_escapes_terminal_control_sequences(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"][0] = {
+        "item": "\x1b[31m",
+        "fraction": "half",
+    }
+    result = _invoke(
+        "--check", make_portfolio(selections=portfolio_selections)
+    )
+    assert result.exit_code == 1
+    assert "\\x1b[31m" in result.output
+    assert "\x1b" not in result.output
+
+
 # -- budget --check -----------------------------------------------------
 
 
@@ -405,6 +469,38 @@ def test_budget_binding_without_selection_single_proposal(
     assert "sel-live-a" in result.output
 
 
+def test_budget_check_auto_binds_single_selection(
+    make_grant, make_portfolio, portfolio_selections
+):
+    portfolio_root = make_portfolio(
+        selections=[], single_selection=portfolio_selections[0]
+    )
+    grant_root = _bound_grant(make_grant, portfolio_root, selection=None)
+    result = _invoke("--check", grant_root)
+    assert result.exit_code == 0
+    assert "All checks passed" in result.output
+
+
+def test_budget_check_binding_without_selection_multi_fails(
+    make_grant, make_portfolio
+):
+    grant_root = _bound_grant(make_grant, make_portfolio(), selection=None)
+    result = _invoke("--check", grant_root)
+    assert result.exit_code == 2
+    assert "pass --selection ID" in result.output
+    assert "sel-live-a" in result.output
+
+
+def test_budget_bound_project_rejects_non_mapping_grant_yaml(tmp_path):
+    (tmp_path / "grant.yaml").write_text(
+        "- not\n- a mapping\n", encoding="utf-8"
+    )
+    result = _invoke("--check", tmp_path)
+    assert result.exit_code == 2
+    assert "must contain a YAML mapping" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_budget_binding_unknown_selection_exit_2(make_grant, make_portfolio):
     grant_root = _bound_grant(make_grant, make_portfolio(), selection="ghost")
     result = _invoke(grant_root)
@@ -508,6 +604,54 @@ def test_check_binding_without_portfolio_key_is_an_error(make_grant):
     hits = [i for i in result.items if i.rule == "budget_model_invalid"]
     assert len(hits) == 1
     assert hits[0].level == "error"
+
+
+@pytest.mark.parametrize("binding", [{}, "not-a-mapping", None])
+def test_check_malformed_budget_model_is_an_error(
+    make_grant, simple_config, binding
+):
+    simple_config["budget_model"] = binding
+    grant_root = make_grant(
+        simple_config,
+        {
+            "responses/summary.md": "Summary words.",
+            "responses/narrative.md": "Narrative words.",
+        },
+    )
+    result = run_checks(GrantProject(grant_root))
+    hits = [i for i in result.items if i.rule == "budget_model_invalid"]
+    assert len(hits) == 1
+
+
+def test_malformed_bound_portfolio_path_is_cleanly_reported(
+    make_grant, simple_config
+):
+    simple_config["budget_model"] = {
+        "portfolio": "bad\0path",
+        "selection": "sel-live-a",
+    }
+    grant_root = make_grant(
+        simple_config,
+        {
+            "responses/summary.md": "Summary words.",
+            "responses/narrative.md": "Narrative words.",
+        },
+    )
+    checked = run_checks(GrantProject(grant_root))
+    assert any(i.rule == "budget_model_unreadable" for i in checked.items)
+    invoked = _invoke(grant_root)
+    assert invoked.exit_code == 2
+    assert "Could not resolve the bound portfolio" in invoked.output
+    assert "Traceback" not in invoked.output
+
+
+def test_non_string_bound_selection_is_invalid(make_grant, make_portfolio):
+    grant_root = _bound_grant(make_grant, make_portfolio(), selection=42)
+    checked = run_checks(GrantProject(grant_root))
+    assert any(i.rule == "budget_model_invalid" for i in checked.items)
+    invoked = _invoke(grant_root)
+    assert invoked.exit_code == 2
+    assert "must be a string id" in invoked.output
 
 
 def test_check_unreadable_portfolio_is_an_error(make_grant, tmp_path):

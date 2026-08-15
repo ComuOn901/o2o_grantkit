@@ -286,7 +286,7 @@ def _plain_text_citation(pack: Optional[FunderPack]) -> Optional[str]:
         return None
     for rule in pack.formatting_rules:
         if rule.id in ("plain_text_only", "plain_text"):
-            return rule.citation
+            return str(rule.citation) if rule.citation is not None else None
     return None
 
 
@@ -502,8 +502,16 @@ def _check_selection_model(project: "GrantProject") -> list[CheckItem]:
     compiled selection total.
     """
     binding = project.budget_model
-    if not binding:
+    if not project.has_budget_model:
         return []
+    if binding is None:
+        return [
+            CheckItem(
+                level="error",
+                rule="budget_model_invalid",
+                message="budget_model must be a mapping.",
+            )
+        ]
     from ..menu.gates import run_gates
     from ..menu.loader import PortfolioError, load_portfolio
 
@@ -521,8 +529,9 @@ def _check_selection_model(project: "GrantProject") -> list[CheckItem]:
             )
         ]
     try:
-        portfolio = load_portfolio((project.root / portfolio_rel).resolve())
-    except PortfolioError as exc:
+        portfolio_path = (project.root / portfolio_rel).resolve()
+        portfolio = load_portfolio(portfolio_path)
+    except (OSError, PortfolioError, RuntimeError, ValueError) as exc:
         return [
             CheckItem(
                 level="error",
@@ -532,6 +541,14 @@ def _check_selection_model(project: "GrantProject") -> list[CheckItem]:
         ]
 
     selection_id = binding.get("selection")
+    if selection_id is not None and not isinstance(selection_id, str):
+        return [
+            CheckItem(
+                level="error",
+                rule="budget_model_invalid",
+                message="budget_model.selection must be a string id.",
+            )
+        ]
     if selection_id is None and len(portfolio.selections) == 1:
         selection_id = portfolio.selections[0].id
     if (

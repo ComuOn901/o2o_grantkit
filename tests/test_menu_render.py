@@ -45,6 +45,10 @@ def test_round_half_up_rounds_ties_up_not_bankers():
     assert round_half_up(245056.25) == 245056
 
 
+def test_round_half_up_handles_large_finite_values():
+    assert round_half_up(1e28) == 10**28
+
+
 def test_format_money_whole_units_with_commas():
     assert format_money(1234.56, "USD") == "USD 1,235"
     assert format_money(0.0, "EUR") == "EUR 0"
@@ -59,7 +63,7 @@ def test_generated_from_names_provider_and_scenario(make_portfolio):
     assert "eggnest-employer 0.2.0" in text
     assert "2026-08-15" in text
     assert "scenario synthetic-tests" in text
-    assert "Same inputs produce the same document." in text
+    assert "Compilation is deterministic for the same inputs." in text
 
 
 def test_generated_from_unknown_provider():
@@ -95,6 +99,16 @@ def test_markdown_zero_categories_suppressed(make_portfolio):
     assert "| **Total** | **USD 245,056** |" in text
 
 
+def test_markdown_preserves_fractional_overhead_rate(
+    make_portfolio, portfolio_menu
+):
+    portfolio_menu["overheads"]["fiscal_sponsorship_rate"] = 0.075
+    portfolio, selection, cost = _compiled(
+        make_portfolio(menu=portfolio_menu), "sel-live-a"
+    )
+    assert "| Overhead (7.5%) |" in budget_markdown(portfolio, selection, cost)
+
+
 def test_markdown_personnel_mixed_benchmarks_use_dash(make_portfolio):
     # Encoding Lead carries a benchmark; Research Engineer does not —
     # the Benchmark column appears, with an em-dash filler.
@@ -105,6 +119,29 @@ def test_markdown_personnel_mixed_benchmarks_use_dash(make_portfolio):
         text
     )
     assert "| — |" in text
+
+
+def test_markdown_table_cells_escape_pipes_and_newlines(
+    make_portfolio, portfolio_menu, portfolio_rates
+):
+    portfolio_menu["items"][1]["title"] = "Alpha | injected\ncontinued"
+    role = portfolio_rates["roles"][0]
+    role["benchmark"]["source"] = "BLS | OEWS\nMay 2024"
+    portfolio, selection, cost = _compiled(
+        make_portfolio(menu=portfolio_menu, rates=portfolio_rates),
+        "sel-live-a",
+    )
+    text = budget_markdown(portfolio, selection, cost)
+    item_row = next(
+        line for line in text.splitlines() if "Alpha &#124;" in line
+    )
+    assert "Alpha &#124; injected<br>continued" in item_row
+    assert item_row.count("|") == 6
+    personnel_row = next(
+        line for line in text.splitlines() if "BLS &#124; OEWS" in line
+    )
+    assert "BLS &#124; OEWS<br>May 2024" in personnel_row
+    assert personnel_row.count("|") == 6
 
 
 def test_markdown_personnel_without_benchmarks_drops_column(
@@ -157,6 +194,24 @@ def test_markdown_no_personnel_section_without_labor(
     assert "## Personnel" not in text
     assert "## Selected items" in text
     assert "## Category summary" in text
+
+
+def test_render_avoids_recurring_intermediate_overflow(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["items"][4]["resourcing"]["recurring_usd_per_year"] = 1e308
+    portfolio_selections[1]["window_months"] = 24
+    portfolio_selections[1]["selections"][1]["fraction"] = 0.5
+    portfolio, selection, cost = _compiled(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections),
+        "sel-live-b",
+    )
+    markdown = budget_markdown(portfolio, selection, cost)
+    rich = _rich_output(portfolio, selection, cost)
+    assert "Delta hosting" in markdown
+    assert "Delta hosting" in rich
+    assert "inf" not in markdown.lower()
+    assert "inf" not in rich.lower()
 
 
 # -- narrative skeleton -------------------------------------------------
@@ -212,6 +267,18 @@ def test_narrative_budget_justification_lists_roles(make_portfolio):
     assert "- Research Engineer: 1.5 FTE-months" in text
 
 
+def test_narrative_does_not_re_evaluate_input_as_jinja(
+    make_portfolio, portfolio_menu
+):
+    portfolio_menu["items"][1]["what"] = "Use **bold** and {{ 7 * 7 }}."
+    portfolio, selection, cost = _compiled(
+        make_portfolio(menu=portfolio_menu), "sel-live-a"
+    )
+    text = budget_narrative(portfolio, selection, cost)
+    assert "Use **bold** and {{ 7 * 7 }}." in text
+    assert "Use **bold** and 49." not in text
+
+
 # -- rich tables --------------------------------------------------------
 
 
@@ -256,7 +323,27 @@ def test_print_budget_with_target_and_benchmarks(make_portfolio):
     assert "target USD 500,000" in out
     assert "Benchmark" in out
     assert "Target fit" in out
-    assert "49%" in out
+    assert "49.01%" in out
+
+
+def test_print_budget_treats_portfolio_text_as_literal_rich_content(
+    make_portfolio, portfolio_menu, portfolio_rates, portfolio_selections
+):
+    portfolio_menu["items"][1]["title"] = "Alpha [/red] coverage"
+    portfolio_rates["provider"] = "Provider [link=https://example.test]"
+    portfolio_selections[0]["funder"] = "Fund [/bold]"
+    portfolio, selection, cost = _compiled(
+        make_portfolio(
+            menu=portfolio_menu,
+            rates=portfolio_rates,
+            selections=portfolio_selections,
+        ),
+        "sel-live-a",
+    )
+    out = _rich_output(portfolio, selection, cost)
+    assert "Alpha [/red] coverage" in out
+    assert "Provider [link=https://example.test]" in out
+    assert "Fund [/bold]" in out
 
 
 def test_markdown_is_pure_function_of_inputs(make_portfolio):

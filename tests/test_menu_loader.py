@@ -48,6 +48,70 @@ def test_malformed_selection_yaml_raises(make_portfolio):
         load_portfolio(root)
 
 
+def test_duplicate_yaml_key_raises(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").write_text(
+        "schema: grantkit-menu/v0\ncurrency: USD\ncurrency: EUR\nitems: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(PortfolioError, match="duplicate key.*currency"):
+        load_portfolio(root)
+
+
+def test_yaml_merge_key_may_be_overridden(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").write_text(
+        "defaults: &defaults\n"
+        "  currency: EUR\n"
+        "<<: *defaults\n"
+        "schema: grantkit-menu/v0\n"
+        "currency: USD\n"
+        "items: []\n",
+        encoding="utf-8",
+    )
+    assert load_portfolio(root).menu.currency == "USD"
+
+
+def test_unsafe_yaml_tag_raises(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").write_text(
+        "!!python/object/apply:builtins.str [unsafe]\n", encoding="utf-8"
+    )
+    with pytest.raises(PortfolioError, match="Could not parse"):
+        load_portfolio(root)
+
+
+def test_invalid_utf8_raises(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").write_bytes(b"\xff")
+    with pytest.raises(PortfolioError, match="Could not read menu.yaml"):
+        load_portfolio(root)
+
+
+def test_required_yaml_path_that_is_directory_raises(make_portfolio):
+    root = make_portfolio()
+    (root / "menu.yaml").unlink()
+    (root / "menu.yaml").mkdir()
+    with pytest.raises(PortfolioError, match="Could not read menu.yaml"):
+        load_portfolio(root)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "x: " + "[" * 1000 + "0" + "]" * 1000,
+        "x: " + "1" * 4301,
+        "x: !!timestamp 999999-99-99\n",
+    ],
+    ids=("deep-nesting", "huge-integer", "invalid-timestamp"),
+)
+def test_hostile_yaml_constructor_failure_is_wrapped(make_portfolio, payload):
+    root = make_portfolio()
+    (root / "menu.yaml").write_text(payload, encoding="utf-8")
+    with pytest.raises(PortfolioError, match="Could not parse menu.yaml"):
+        load_portfolio(root)
+
+
 def test_non_mapping_rates_yaml_raises(make_portfolio):
     root = make_portfolio()
     (root / "rates.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
@@ -126,6 +190,18 @@ def test_portfolio_without_selections_loads(make_portfolio):
     assert portfolio.selection_ids == []
 
 
+def test_selections_path_must_be_directory(make_portfolio):
+    root = make_portfolio(selections=[])
+    (root / "selections").write_text("not a directory", encoding="utf-8")
+    with pytest.raises(PortfolioError, match="selections.*directory"):
+        load_portfolio(root)
+
+
 def test_get_selection_missing_returns_none(make_portfolio):
     portfolio = load_portfolio(make_portfolio())
     assert portfolio.get_selection("ghost") is None
+
+
+def test_load_portfolio_accepts_documented_string_path(make_portfolio):
+    portfolio = load_portfolio(str(make_portfolio()))
+    assert portfolio.menu.currency == "USD"

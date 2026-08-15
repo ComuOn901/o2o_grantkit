@@ -1,7 +1,7 @@
 """Pure budget-compilation arithmetic.
 
 The compiled budget is a deterministic function of (menu, rates, selection):
-same inputs produce the same output, byte for byte. All money is carried as
+the same inputs produce the same compiled values. All money is carried as
 floats internally; rounding to whole dollars happens only at render time
 (:mod:`grantkit.menu.render`).
 
@@ -267,7 +267,7 @@ def selection_cost(
         costed = item_cost(item, rates, menu.unit_costs)
         f = line.fraction
         one_time = f * costed.one_time_usd
-        recurring = f * costed.recurring_usd_per_year * window / 12.0
+        recurring = costed.recurring_usd_per_year * (f * window / 12.0)
         bearing = f * costed.overhead_bearing_one_time_usd + recurring
         cost.items.append(
             SelectedItemCost(
@@ -318,6 +318,18 @@ def selection_cost(
         overhead_base += (
             base_fraction * base_cost.overhead_bearing_one_time_usd
         )
+        if base_fraction > 0:
+            for role, spend in base_cost.labor_by_role.items():
+                entry = cost.personnel.setdefault(
+                    role,
+                    {
+                        "fte_months": 0.0,
+                        "loaded_usd": rates.roles_by_name[role].loaded_usd,
+                        "usd": 0.0,
+                    },
+                )
+                entry["fte_months"] += base_fraction * spend["fte_months"]
+                entry["usd"] += base_fraction * spend["usd"]
 
     cost.overhead_usd = rate * overhead_base
     cost.total_usd = cost.work_usd + cost.org_base_usd + cost.overhead_usd

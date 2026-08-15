@@ -54,6 +54,17 @@ def test_cofunding_over_allocation_fails(make_portfolio, portfolio_selections):
     assert "sel-live-b" in hits[0].message
 
 
+def test_cofunding_message_preserves_tolerance_scale(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"][0]["fraction"] = 0.5000000006
+    portfolio_selections[1]["selections"][0]["fraction"] = 0.5000000006
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    message = _by_rule(items, "cofunding_over_allocated")[0].message
+    assert "0.5000000006 +" in message
+    assert "1.0000000012" in message
+
+
 def test_cofunding_ignores_drafts(make_portfolio, portfolio_selections):
     # The draft over-planner takes 0.8 of alpha on top of the two live
     # halves; drafts are free to over-plan.
@@ -225,6 +236,15 @@ def test_fraction_out_of_range(make_portfolio, portfolio_selections):
     assert all(item.level == "error" for item in hits)
 
 
+def test_fraction_range_message_does_not_round_violation_away(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"][0]["fraction"] = 1.0000000001
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    message = _by_rule(items, "fraction_out_of_range")[0].message
+    assert "1.0000000001" in message
+
+
 def test_scoped_gates_validate_out_of_scope_binding_fractions(
     make_portfolio, portfolio_selections
 ):
@@ -292,6 +312,34 @@ def test_dependency_funded_in_live_selection_is_covered(
         make_portfolio(menu=portfolio_menu, selections=portfolio_selections)
     )
     assert _by_rule(items, "dependency_unfunded") == []
+
+
+def test_dependency_funded_as_org_base_is_covered(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["items"][0]["status"] = "planned"
+    portfolio_menu["items"][1]["dependencies"] = ["org-floor"]
+    items = _gates(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections)
+    )
+    assert _by_rule(items, "dependency_unfunded") == []
+
+
+def test_org_base_claim_checks_its_own_dependencies(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["items"][0]["status"] = "planned"
+    portfolio_menu["items"][0]["dependencies"] = ["beta"]
+    portfolio_menu["items"][1]["dependencies"] = []
+    portfolio_menu["items"][2]["status"] = "planned"
+    items = _gates(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections),
+        selection_id="sel-live-a",
+    )
+    hits = _by_rule(items, "dependency_unfunded")
+    assert len(hits) == 1
+    assert "'org-floor'" in hits[0].message
+    assert "'beta'" in hits[0].message
 
 
 def test_dependency_self_funded_is_covered(
@@ -369,6 +417,42 @@ def test_over_target_warning(make_portfolio, portfolio_selections):
     assert "ask, not a funder cap" in hits[0].message
 
 
+def test_gate_money_uses_half_up_rounding(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["overheads"]["fiscal_sponsorship_rate"] = 0
+    portfolio_menu["items"][3]["resourcing"]["units"]["module"] = 1
+    selection = portfolio_selections[0]
+    selection["target_usd"] = 2
+    selection.pop("org_base")
+    selection["selections"] = [{"item": "gamma-units", "fraction": 1.0}]
+    items = _gates(
+        make_portfolio(menu=portfolio_menu, selections=[selection]),
+        selection_id="sel-live-a",
+        pack=_pack(total_cap=2),
+    )
+    assert "USD 3" in _by_rule(items, "over_target")[0].message
+    assert "USD 3" in _by_rule(items, "budget_over_total_cap")[0].message
+
+
+def test_derived_non_finite_total_is_an_error(make_portfolio, portfolio_menu):
+    portfolio_menu["unit_costs"]["module"]["usd_per_unit"] = 1e308
+    portfolio_menu["items"][3]["resourcing"]["units"]["module"] = 1e308
+    items = _gates(make_portfolio(menu=portfolio_menu))
+    hits = _by_rule(items, "budget_non_finite")
+    assert hits and all(item.level == "error" for item in hits)
+
+
+def test_derived_non_finite_fit_is_an_error(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["target_usd"] = 5e-324
+    items = _gates(make_portfolio(selections=portfolio_selections))
+    hits = _by_rule(items, "budget_non_finite")
+    assert len(hits) == 1
+    assert hits[0].section == "sel-live-a"
+
+
 def test_zero_target_does_not_divide_by_zero(
     make_portfolio, portfolio_selections
 ):
@@ -394,6 +478,17 @@ def test_components_mismatch_warns(make_portfolio, portfolio_rates):
     hits = _by_rule(items, "components_mismatch")
     assert len(hits) == 1
     assert hits[0].level == "warning"
+
+
+def test_rate_heuristics_handle_finite_operands_with_huge_ratio(
+    make_portfolio, portfolio_rates
+):
+    portfolio_rates["roles"][1]["base_usd"] = 5e-324
+    portfolio_rates["roles"][1]["loaded_usd"] = 1e308
+    items = _gates(make_portfolio(rates=portfolio_rates))
+    hits = _by_rule(items, "load_factor_suspicious")
+    assert len(hits) == 1
+    assert "finite float range" in hits[0].message
 
 
 def test_loaded_only_role_raises_no_heuristics(make_portfolio):

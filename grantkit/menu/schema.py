@@ -63,9 +63,14 @@ _ITEM_ID_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 def _is_int_or_none(value: Any) -> bool:
-    return value is None or (
-        isinstance(value, int) and not isinstance(value, bool)
-    )
+    if value is None:
+        return True
+    if not isinstance(value, int) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _is_number(value: Any) -> TypeGuard[int | float]:
@@ -81,6 +86,33 @@ def _is_number(value: Any) -> TypeGuard[int | float]:
 
 def _is_number_or_none(value: Any) -> bool:
     return value is None or _is_number(value)
+
+
+def _is_string(value: Any, *, nonempty: bool = False) -> TypeGuard[str]:
+    if not isinstance(value, str) or (nonempty and not value):
+        return False
+    if any(
+        (ord(char) < 32 and char not in "\t\n\r") or 0x7F <= ord(char) <= 0x9F
+        for char in value
+    ):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _is_optional_string(value: Any) -> bool:
+    return value is None or _is_string(value)
+
+
+def _is_string_list(value: Any, *, nonempty: bool = False) -> bool:
+    return (
+        isinstance(value, list)
+        and (not nonempty or bool(value))
+        and all(_is_string(entry, nonempty=True) for entry in value)
+    )
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -463,6 +495,10 @@ def _validate_resourcing(
             errors.append(f"{where} 'fte_months' must be a mapping")
         else:
             for role, months in fte_months.items():
+                if not _is_string(role, nonempty=True):
+                    errors.append(
+                        f"{where} 'fte_months' keys must be non-empty strings"
+                    )
                 if not _is_number(months) or months < 0:
                     errors.append(
                         f"{where} fte_months['{role}'] must be a "
@@ -474,6 +510,10 @@ def _validate_resourcing(
             errors.append(f"{where} 'units' must be a mapping")
         else:
             for unit, count in units.items():
+                if not _is_string(unit, nonempty=True):
+                    errors.append(
+                        f"{where} 'units' keys must be non-empty strings"
+                    )
                 if not _is_number(count) or count < 0:
                     errors.append(
                         f"{where} units['{unit}'] must be a "
@@ -512,7 +552,7 @@ def validate_menu(data: Any) -> list[str]:
     _validate_schema_key(data, MENU_SCHEMA, errors)
 
     currency = data.get("currency")
-    if not currency or not isinstance(currency, str):
+    if not _is_string(currency, nonempty=True):
         errors.append("missing required key: 'currency'")
 
     overheads = data.get("overheads")
@@ -528,6 +568,8 @@ def validate_menu(data: Any) -> list[str]:
                     "overheads.fiscal_sponsorship_rate must be a number "
                     "between 0 and 1"
                 )
+            if not _is_optional_string(overheads.get("provenance")):
+                errors.append("overheads.provenance must be a string or null")
 
     unit_costs = data.get("unit_costs")
     if unit_costs is not None:
@@ -536,6 +578,8 @@ def validate_menu(data: Any) -> list[str]:
         else:
             for name, entry in unit_costs.items():
                 where = f"unit_costs['{name}']"
+                if not _is_string(name, nonempty=True):
+                    errors.append("unit_costs keys must be non-empty strings")
                 if not isinstance(entry, dict):
                     errors.append(f"{where} must be a mapping")
                     continue
@@ -545,8 +589,15 @@ def validate_menu(data: Any) -> list[str]:
                         f"{where} 'usd_per_unit' must be a non-negative number"
                     )
                 provenance = entry.get("provenance")
-                if provenance is not None and not isinstance(provenance, list):
-                    errors.append(f"{where} 'provenance' must be a list")
+                if provenance is not None and not _is_string_list(provenance):
+                    errors.append(
+                        f"{where} 'provenance' must be a list of "
+                        "non-empty strings"
+                    )
+                if not _is_optional_string(entry.get("derivation")):
+                    errors.append(
+                        f"{where} 'derivation' must be a string or null"
+                    )
 
     items = data.get("items")
     if not isinstance(items, list):
@@ -560,35 +611,48 @@ def validate_menu(data: Any) -> list[str]:
             errors.append(f"{where} must be a mapping")
             continue
         item_id = item.get("id")
-        if not item_id or not isinstance(item_id, str):
+        if not _is_string(item_id, nonempty=True):
             errors.append(f"{where} missing 'id'")
         elif not _ITEM_ID_RE.match(item_id):
-            errors.append(f"{where} id '{item_id}' must match [a-z0-9-]+")
+            errors.append(f"{where} id {item_id!r} must match [a-z0-9-]+")
         elif item_id in seen_ids:
             errors.append(f"{where} duplicate item id '{item_id}'")
         else:
             seen_ids.add(item_id)
         label = f"{where} ('{item_id}')"
         for key in ("type", "title", "what", "evidence"):
-            if not item.get(key):
+            if not _is_string(item.get(key), nonempty=True):
                 errors.append(f"{label} missing '{key}'")
         status = item.get("status")
-        if status not in VALID_ITEM_STATUSES:
+        if not _is_string(status) or status not in VALID_ITEM_STATUSES:
             errors.append(
-                f"{label} invalid status '{status}' "
+                f"{label} invalid status {status!r} "
                 f"(allowed: {sorted(VALID_ITEM_STATUSES)})"
             )
         if not _is_int_or_none(item.get("duration_months")):
             errors.append(
                 f"{label} 'duration_months' must be an integer or null"
             )
-        if not isinstance(item.get("dependencies"), list):
+        dependencies = item.get("dependencies")
+        if not isinstance(dependencies, list):
             errors.append(
                 f"{label} 'dependencies' must be a list (may be empty)"
             )
+        elif not all(
+            _is_string(dependency, nonempty=True)
+            for dependency in dependencies
+        ):
+            errors.append(
+                f"{label} 'dependencies' must contain only non-empty strings"
+            )
         provenance = item.get("provenance")
-        if not isinstance(provenance, list) or not provenance:
-            errors.append(f"{label} 'provenance' must be a non-empty list")
+        if not _is_string_list(provenance, nonempty=True):
+            errors.append(
+                f"{label} 'provenance' must be a non-empty list of "
+                "non-empty strings"
+            )
+        if not _is_optional_string(item.get("revenue_unlock")):
+            errors.append(f"{label} 'revenue_unlock' must be a string or null")
         _validate_resourcing(item.get("resourcing"), label, errors)
     return errors
 
@@ -600,10 +664,10 @@ def validate_rates(data: Any) -> list[str]:
         return ["rates must be a mapping/dict"]
     _validate_schema_key(data, RATES_SCHEMA, errors)
 
-    if not data.get("provider") or not isinstance(data.get("provider"), str):
+    if not _is_string(data.get("provider"), nonempty=True):
         errors.append("missing required key: 'provider'")
     generated = data.get("generated")
-    if not generated or not isinstance(generated, str):
+    if not _is_string(generated, nonempty=True):
         errors.append("missing required key: 'generated' (ISO date)")
     else:
         try:
@@ -612,8 +676,11 @@ def validate_rates(data: Any) -> list[str]:
             errors.append(
                 f"'generated' must be an ISO date (got '{generated}')"
             )
-    if not data.get("currency") or not isinstance(data.get("currency"), str):
+    if not _is_string(data.get("currency"), nonempty=True):
         errors.append("missing required key: 'currency'")
+    for key in ("scenario", "jurisdiction", "method"):
+        if not _is_optional_string(data.get(key)):
+            errors.append(f"'{key}' must be a string or null")
 
     roles = data.get("roles")
     if not isinstance(roles, list):
@@ -627,7 +694,7 @@ def validate_rates(data: Any) -> list[str]:
             errors.append(f"{where} must be a mapping")
             continue
         name = role.get("role")
-        if not name or not isinstance(name, str):
+        if not _is_string(name, nonempty=True):
             errors.append(f"{where} missing 'role'")
         elif name in seen_roles:
             errors.append(f"{where} duplicate role '{name}'")
@@ -639,6 +706,8 @@ def validate_rates(data: Any) -> list[str]:
             errors.append(f"{label} 'loaded_usd' must be a positive number")
         if not _is_number_or_none(role.get("base_usd")):
             errors.append(f"{label} 'base_usd' must be a number or null")
+        if not _is_optional_string(role.get("soc")):
+            errors.append(f"{label} 'soc' must be a string or null")
         components = role.get("components")
         if components is not None:
             if not isinstance(components, list):
@@ -649,22 +718,36 @@ def validate_rates(data: Any) -> list[str]:
                     if not isinstance(comp, dict):
                         errors.append(f"{cwhere} must be a mapping")
                         continue
-                    if not comp.get("name"):
+                    if not _is_string(comp.get("name"), nonempty=True):
                         errors.append(f"{cwhere} missing 'name'")
-                    if not _is_number(comp.get("amount_usd")):
+                    amount = comp.get("amount_usd")
+                    if not _is_number(amount) or amount < 0:
                         errors.append(
-                            f"{cwhere} 'amount_usd' must be a number"
+                            f"{cwhere} 'amount_usd' must be a "
+                            "non-negative number"
                         )
-                    if comp.get("basis") not in VALID_COMPONENT_BASES:
+                    basis = comp.get("basis")
+                    if (
+                        not _is_string(basis)
+                        or basis not in VALID_COMPONENT_BASES
+                    ):
                         errors.append(
-                            f"{cwhere} invalid basis '{comp.get('basis')}' "
+                            f"{cwhere} invalid basis {basis!r} "
                             f"(allowed: {sorted(VALID_COMPONENT_BASES)})"
+                        )
+                    if not _is_optional_string(comp.get("source")):
+                        errors.append(
+                            f"{cwhere} 'source' must be a string or null"
                         )
         benchmark = role.get("benchmark")
         if benchmark is not None:
             if not isinstance(benchmark, dict):
                 errors.append(f"{label} 'benchmark' must be a mapping")
             else:
+                if not _is_optional_string(benchmark.get("source")):
+                    errors.append(
+                        f"{label} benchmark.source must be a string or null"
+                    )
                 for key in ("percentile", "value_usd"):
                     if not _is_number_or_none(benchmark.get(key)):
                         errors.append(
@@ -672,8 +755,10 @@ def validate_rates(data: Any) -> list[str]:
                             f"or null"
                         )
         provenance = role.get("provenance")
-        if provenance is not None and not isinstance(provenance, list):
-            errors.append(f"{label} 'provenance' must be a list")
+        if provenance is not None and not _is_string_list(provenance):
+            errors.append(
+                f"{label} 'provenance' must be a list of non-empty strings"
+            )
     return errors
 
 
@@ -685,19 +770,24 @@ def validate_selection(data: Any) -> list[str]:
     _validate_schema_key(data, SELECTION_SCHEMA, errors)
 
     for key in ("id", "funder"):
-        if not data.get(key) or not isinstance(data.get(key), str):
+        if not _is_string(data.get(key), nonempty=True):
             errors.append(f"missing required key: '{key}'")
     status = data.get("status")
-    if status not in VALID_SELECTION_STATUSES:
+    if not _is_string(status) or status not in VALID_SELECTION_STATUSES:
         errors.append(
-            f"invalid status '{status}' "
+            f"invalid status {status!r} "
             f"(allowed: {sorted(VALID_SELECTION_STATUSES)})"
         )
     target = data.get("target_usd")
     if target is not None and (not _is_number(target) or target < 0):
         errors.append("'target_usd' must be a non-negative number or null")
     window = data.get("window_months")
-    if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
+    if (
+        not isinstance(window, int)
+        or isinstance(window, bool)
+        or window <= 0
+        or not _is_number(window)
+    ):
         errors.append("'window_months' must be an integer > 0")
 
     org_base = data.get("org_base")
@@ -705,7 +795,7 @@ def validate_selection(data: Any) -> list[str]:
         if not isinstance(org_base, dict):
             errors.append("'org_base' must be a mapping")
         else:
-            if not org_base.get("item"):
+            if not _is_string(org_base.get("item"), nonempty=True):
                 errors.append("org_base missing 'item'")
             if not _is_number(org_base.get("fraction")):
                 errors.append("org_base 'fraction' must be a number")
@@ -719,11 +809,15 @@ def validate_selection(data: Any) -> list[str]:
         if not isinstance(line, dict):
             errors.append(f"{where} must be a mapping")
             continue
-        if not line.get("item"):
+        if not _is_string(line.get("item"), nonempty=True):
             errors.append(f"{where} missing 'item'")
         if not _is_number(line.get("fraction")):
             errors.append(
                 f"{where} ('{line.get('item')}') 'fraction' must be "
                 f"a number"
             )
+        if not _is_optional_string(line.get("note")):
+            errors.append(f"{where} 'note' must be a string or null")
+    if not _is_optional_string(data.get("notes")):
+        errors.append("'notes' must be a string or null")
     return errors

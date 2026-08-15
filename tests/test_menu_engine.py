@@ -130,6 +130,18 @@ def test_recurring_prorated_by_window(make_portfolio, portfolio_selections):
     assert cost.fit is None  # no target on sel-live-b
 
 
+def test_recurring_arithmetic_avoids_intermediate_overflow(
+    make_portfolio, portfolio_menu, portfolio_selections
+):
+    portfolio_menu["items"][4]["resourcing"]["recurring_usd_per_year"] = 1e308
+    portfolio = load_portfolio(
+        make_portfolio(menu=portfolio_menu, selections=portfolio_selections)
+    )
+    cost = selection_cost(portfolio.get_selection("sel-live-b"), portfolio)
+    assert cost.recurring_usd == pytest.approx(1e308)
+    assert cost.total_usd < float("inf")
+
+
 def test_org_base_not_prorated_by_window(make_portfolio, portfolio_selections):
     portfolio_selections[0]["window_months"] = 6
     portfolio = load_portfolio(make_portfolio(selections=portfolio_selections))
@@ -137,6 +149,22 @@ def test_org_base_not_prorated_by_window(make_portfolio, portfolio_selections):
     # A flat org-base block is a fraction of a flat amount; the window
     # does not scale it.
     assert cost.org_base_usd == pytest.approx(120000.0)
+
+
+def test_org_base_labor_is_included_in_personnel(
+    make_portfolio, portfolio_menu
+):
+    portfolio_menu["items"][0]["resourcing"] = {
+        "fte_months": {"Program Lead": 12}
+    }
+    portfolio = load_portfolio(make_portfolio(menu=portfolio_menu))
+    cost = selection_cost(portfolio.get_selection("sel-live-a"), portfolio)
+    assert cost.org_base_usd == pytest.approx(18000.0)
+    assert cost.personnel["Program Lead"] == {
+        "fte_months": pytest.approx(1.2),
+        "loaded_usd": pytest.approx(180000.0),
+        "usd": pytest.approx(18000.0),
+    }
 
 
 def test_overhead_included_fee_applied_exactly_once(

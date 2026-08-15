@@ -28,12 +28,15 @@ selection id, so table output shows which proposal each finding belongs to.
 
 from __future__ import annotations
 
-from typing import Optional
+import math
+from decimal import Decimal
+from typing import Any, Optional
 
 from ..core.checks import CheckItem
 from ..packs import FunderPack
 from .engine import selection_cost
 from .loader import Portfolio
+from .money import format_money, format_percent, round_half_up
 from .schema import (
     Selection,
     validate_menu,
@@ -54,6 +57,30 @@ LOAD_FACTOR_MAX = 2.0
 
 #: Components must sum to loaded within this many dollars.
 COMPONENTS_TOLERANCE_USD = 1.0
+
+
+def _contains_non_finite_float(value: Any) -> bool:
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, dict):
+        return any(
+            _contains_non_finite_float(entry) for entry in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_non_finite_float(entry) for entry in value)
+    return False
+
+
+def _non_finite_finding(selection_id: str) -> CheckItem:
+    return CheckItem(
+        level="error",
+        rule="budget_non_finite",
+        message=(
+            f"Selection '{selection_id}' produces arithmetic outside the "
+            "finite numeric range; reduce the input magnitudes."
+        ),
+        section=selection_id,
+    )
 
 
 def run_gates(
@@ -292,30 +319,43 @@ def _rates_gates(portfolio: Portfolio) -> list[CheckItem]:
                     )
                 )
             elif factor > LOAD_FACTOR_MAX:
+                factor_text = (
+                    f"{factor:.2f}"
+                    if math.isfinite(factor)
+                    else "above the finite float range"
+                )
                 out.append(
                     CheckItem(
                         level="warning",
                         rule="load_factor_suspicious",
                         message=(
                             f"Role '{role.role}': loaded/base = "
-                            f"{factor:.2f} — a load factor above "
+                            f"{factor_text} — a load factor above "
                             f"{LOAD_FACTOR_MAX:.1f} is unusually high. "
                             f"Advisory heuristic, not a funder rule."
                         ),
                     )
                 )
             if role.components:
-                total = base + sum(comp.amount_usd for comp in role.components)
-                delta = total - loaded
-                if abs(delta) > COMPONENTS_TOLERANCE_USD:
+                total = Decimal(str(base)) + sum(
+                    (
+                        Decimal(str(comp.amount_usd))
+                        for comp in role.components
+                    ),
+                    Decimal(0),
+                )
+                delta = total - Decimal(str(loaded))
+                if abs(delta) > Decimal(str(COMPONENTS_TOLERANCE_USD)):
                     out.append(
                         CheckItem(
                             level="warning",
                             rule="components_mismatch",
                             message=(
                                 f"Role '{role.role}': base + components "
-                                f"= {total:,.0f} but loaded_usd = "
-                                f"{loaded:,.0f} (off by {delta:+,.0f})."
+                                f"= {format_money(total, portfolio.rates.currency)} "
+                                f"but loaded_usd = "
+                                f"{format_money(loaded, portfolio.rates.currency)} "
+                                f"(off by {round_half_up(delta):+,})."
                             ),
                         )
                     )
@@ -338,7 +378,7 @@ def _fraction_gates(portfolio: Portfolio) -> list[CheckItem]:
                         rule="fraction_out_of_range",
                         message=(
                             f"Selection '{sid}' item '{line.item}' fraction "
-                            f"{line.fraction:g} is outside [0, 1]."
+                            f"{line.fraction!r} is outside [0, 1]."
                         ),
                         section=sid,
                     )
@@ -352,7 +392,7 @@ def _fraction_gates(portfolio: Portfolio) -> list[CheckItem]:
                         rule="fraction_out_of_range",
                         message=(
                             f"Selection '{sid}' org_base fraction "
-                            f"{base_fraction:g} is outside [0, 1]."
+                            f"{base_fraction!r} is outside [0, 1]."
                         ),
                         section=sid,
                     )
@@ -380,7 +420,7 @@ def _cofunding_gate(portfolio: Portfolio) -> list[CheckItem]:
         total = sum(fraction for _, _, fraction in parts)
         if total > 1.0 + COFUNDING_TOLERANCE:
             detail = " + ".join(
-                f"{sid}{f' ({kind})' if kind else ''} {fraction:g}"
+                f"{sid}{f' ({kind})' if kind else ''} {fraction!r}"
                 for sid, kind, fraction in parts
             )
             out.append(
@@ -390,7 +430,7 @@ def _cofunding_gate(portfolio: Portfolio) -> list[CheckItem]:
                     message=(
                         f"Item '{item_id}' is over-allocated across "
                         f"live/awarded selections: {detail} = "
-                        f"{total:g} (max 1.0)."
+                        f"{total!r} (max 1.0)."
                     ),
                 )
             )
@@ -477,6 +517,12 @@ def _selection_gates(
         cost = selection_cost(selection, portfolio)
     except KeyError:  # pragma: no cover - guarded above
         return out
+    except OverflowError:
+        out.append(_non_finite_finding(sid))
+        return out
+    if _contains_non_finite_float(cost.to_dict()):
+        out.append(_non_finite_finding(sid))
+        return out
     currency = menu.currency
     if selection.target_usd and cost.total_usd > selection.target_usd:
         fit = cost.total_usd / selection.target_usd
@@ -485,10 +531,11 @@ def _selection_gates(
                 level="warning",
                 rule="over_target",
                 message=(
-                    f"Selection '{sid}' compiles to {currency} "
-                    f"{cost.total_usd:,.0f} — {fit:.0%} of the "
-                    f"advisory target {currency} "
-                    f"{selection.target_usd:,.0f} (a target is an "
+                    f"Selection '{sid}' compiles to "
+                    f"{format_money(cost.total_usd, currency)} — "
+                    f"{format_percent(fit)} of the advisory target "
+                    f"{format_money(selection.target_usd, currency)} "
+                    f"(a target is an "
                     f"ask, not a funder cap)."
                 ),
                 section=sid,
@@ -514,12 +561,17 @@ def _unfunded_dependency_gate(
             funded.update(
                 line.item for line in other.selections if line.fraction > 0
             )
+            if other.org_base is not None and other.org_base.fraction > 0:
+                funded.add(other.org_base.item)
 
     out: list[CheckItem] = []
-    for line in selection.selections:
-        if line.fraction <= 0 or line.item not in known_items:
+    claims = [(line.item, line.fraction) for line in selection.selections]
+    if selection.org_base is not None:
+        claims.append((selection.org_base.item, selection.org_base.fraction))
+    for item_id, fraction in claims:
+        if fraction <= 0 or item_id not in known_items:
             continue
-        for dep in known_items[line.item].dependencies:
+        for dep in known_items[item_id].dependencies:
             dep_item = known_items.get(dep)
             if dep_item is None:
                 continue  # dependency_unresolved covers this
@@ -533,7 +585,7 @@ def _unfunded_dependency_gate(
                     rule="dependency_unfunded",
                     message=(
                         f"Selection '{selection.id}' funds "
-                        f"'{line.item}' but its dependency '{dep}' "
+                        f"'{item_id}' but its dependency '{dep}' "
                         f"({dep_item.status}) is not funded in any "
                         f"live/awarded selection — the proposal "
                         f"assumes work nobody has funded."
@@ -576,33 +628,39 @@ def _pack_cap_gates(
             )
         ]
     if rules.total_cap is not None and total_usd > rules.total_cap:
+        over = Decimal(str(total_usd)) - Decimal(str(rules.total_cap))
         out.append(
             CheckItem(
                 level="error",
                 rule="budget_over_total_cap",
                 message=(
-                    f"Selection '{sid}' compiles to {cur} "
-                    f"{total_usd:,.0f}, which exceeds the funder cap "
-                    f"of {cur} {rules.total_cap:,.0f} (over by {cur} "
-                    f"{total_usd - rules.total_cap:,.0f})."
+                    f"Selection '{sid}' compiles to "
+                    f"{format_money(total_usd, cur)}, which exceeds the "
+                    f"funder cap of {format_money(rules.total_cap, cur)} "
+                    f"(over by {format_money(over, cur)})."
                 ),
                 section=sid,
                 citation=rules.notes,
             )
         )
     if rules.annual_cap is not None and selection.window_months > 0:
-        annual = total_usd * 12.0 / selection.window_months
-        if annual > rules.annual_cap:
+        annual = (
+            Decimal(str(total_usd))
+            * Decimal(12)
+            / Decimal(selection.window_months)
+        )
+        if annual > Decimal(str(rules.annual_cap)):
             out.append(
                 CheckItem(
                     level="warning",
                     rule="budget_over_annual_cap",
                     message=(
-                        f"Selection '{sid}' annualizes to {cur} "
-                        f"{annual:,.0f} (total x 12/"
+                        f"Selection '{sid}' annualizes to "
+                        f"{format_money(annual, cur)} (total x 12/"
                         f"{selection.window_months} months), above "
-                        f"the annual cap of {cur} "
-                        f"{rules.annual_cap:,.0f} — uniform-spread "
+                        f"the annual cap of "
+                        f"{format_money(rules.annual_cap, cur)} — "
+                        f"uniform-spread "
                         f"approximation; confirm against the actual "
                         f"phasing."
                     ),

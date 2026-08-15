@@ -8,32 +8,23 @@ boilerplate aside, no prose is invented.
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
 from jinja2 import Environment, FileSystemLoader
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
-from .engine import SelectionCost
+from .engine import SelectedItemCost, SelectionCost
 from .loader import Portfolio
+from .money import format_money, format_percent
+from .money import round_half_up as round_half_up
 from .schema import RoleRate, Selection
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _NARRATIVE_TEMPLATE = "budget_narrative.md.j2"
-
-
-def round_half_up(value: float) -> int:
-    """Round to a whole dollar, half up (not banker's rounding)."""
-    return int(
-        Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    )
-
-
-def format_money(value: float, currency: str) -> str:
-    """Format a float as whole currency units, e.g. ``USD 245,056``."""
-    return f"{currency} {round_half_up(value):,}"
 
 
 def generated_from(portfolio: Portfolio) -> str:
@@ -50,7 +41,7 @@ def generated_from(portfolio: Portfolio) -> str:
     return (
         "Generated from "
         + "; ".join(parts)
-        + ". Same inputs produce the same document."
+        + ". Compilation is deterministic for the same inputs."
     )
 
 
@@ -69,6 +60,27 @@ def _benchmark_text(role: Optional[RoleRate], currency: str) -> str:
     return text
 
 
+def _markdown_inline(value: str) -> str:
+    """Keep a structural Markdown field on one line."""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return " ".join(normalized.split("\n"))
+
+
+def _markdown_cell(value: str) -> str:
+    """Escape table delimiters and preserve line breaks within one cell."""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.replace("|", "&#124;").replace("\n", "<br>")
+
+
+def _item_window_total(line: SelectedItemCost, cost: SelectionCost) -> Decimal:
+    """Unweighted item total over the selection window, without overflow."""
+    return Decimal(str(line.item.one_time_usd)) + (
+        Decimal(str(line.item.recurring_usd_per_year))
+        * Decimal(cost.window_months)
+        / Decimal(12)
+    )
+
+
 # -- rich tables --------------------------------------------------------
 
 
@@ -80,17 +92,21 @@ def print_budget(
 ) -> None:
     """Print the compiled budget as rich tables (the default output)."""
     currency = cost.currency
-    console.print(f"[bold]{cost.selection_id}[/bold] — {cost.funder}")
     console.print(
-        f"[dim]{cost.status} · {cost.window_months}-month window · "
-        + (
-            f"target {format_money(cost.target_usd, currency)}"
-            if cost.target_usd
-            else "no target"
-        )
-        + "[/dim]"
+        Text.assemble((cost.selection_id, "bold"), " — ", cost.funder)
     )
-    console.print(f"[dim]{generated_from(portfolio)}[/dim]\n")
+    target = (
+        f"target {format_money(cost.target_usd, currency)}"
+        if cost.target_usd
+        else "no target"
+    )
+    console.print(
+        Text(
+            f"{cost.status} · {cost.window_months}-month window · {target}",
+            style="dim",
+        )
+    )
+    console.print(Text(generated_from(portfolio) + "\n", style="dim"))
 
     items = Table(show_header=True, header_style="bold")
     items.add_column("Item")
@@ -99,16 +115,13 @@ def print_budget(
     items.add_column("Item cost", justify="right")
     items.add_column("Funded share", justify="right")
     for line in cost.items:
-        item_total = (
-            line.item.one_time_usd
-            + line.item.recurring_usd_per_year * cost.window_months / 12.0
-        )
+        item_total = _item_window_total(line, cost)
         items.add_row(
-            line.title,
-            line.type,
-            f"{line.fraction:g}",
-            format_money(item_total, currency),
-            format_money(line.funded_usd, currency),
+            Text(line.title),
+            Text(line.type),
+            Text(f"{line.fraction:g}"),
+            Text(format_money(item_total, currency)),
+            Text(format_money(line.funded_usd, currency)),
         )
     console.print(items)
 
@@ -126,24 +139,29 @@ def print_budget(
             cells = list(row[:4])
             if has_benchmarks:
                 cells.append(row[4])
-            personnel.add_row(*cells)
+            personnel.add_row(*(Text(cell) for cell in cells))
         console.print(personnel)
 
     summary = Table(show_header=True, header_style="bold")
     summary.add_column("Category")
     summary.add_column("Amount", justify="right")
     for label, amount in _category_rows(cost):
-        summary.add_row(label, format_money(amount, currency))
+        summary.add_row(Text(label), Text(format_money(amount, currency)))
     summary.add_row(
-        "[bold]Total[/bold]",
-        f"[bold]{format_money(cost.total_usd, currency)}[/bold]",
+        Text("Total", style="bold"),
+        Text(format_money(cost.total_usd, currency), style="bold"),
     )
     console.print(summary)
 
     if cost.fit is not None:
         console.print(
-            f"\nTarget fit: [bold]{cost.fit:.0%}[/bold] of "
-            f"{format_money(cost.target_usd or 0.0, currency)}."
+            Text.assemble(
+                "\nTarget fit: ",
+                (format_percent(cost.fit), "bold"),
+                " of ",
+                format_money(cost.target_usd or 0.0, currency),
+                ".",
+            )
         )
 
 
@@ -174,7 +192,10 @@ def _category_rows(cost: SelectionCost) -> list[tuple[str, float]]:
         ("Flat amounts", cost.flat_usd),
         ("Recurring (prorated)", cost.recurring_usd),
         ("Org base", cost.org_base_usd),
-        (f"Overhead ({cost.overhead_rate:.0%})", cost.overhead_usd),
+        (
+            f"Overhead ({format_percent(cost.overhead_rate)})",
+            cost.overhead_usd,
+        ),
     ]
     return [(label, amount) for label, amount in rows if amount]
 
@@ -212,15 +233,18 @@ def budget_markdown(
     """Render the markdown budget document (``budget --output``)."""
     currency = cost.currency
     lines = [
-        f"# Budget — {cost.selection_id}",
+        f"# Budget — {_markdown_inline(cost.selection_id)}",
         "",
-        f"- Funder: {cost.funder}",
-        f"- Status: {cost.status}",
+        f"- Funder: {_markdown_inline(cost.funder)}",
+        f"- Status: {_markdown_inline(cost.status)}",
         f"- Window: {cost.window_months} months",
     ]
     if cost.target_usd:
-        lines.append(f"- Target: {format_money(cost.target_usd, currency)}")
-    lines += ["", generated_from(portfolio), ""]
+        lines.append(
+            "- Target: "
+            + _markdown_inline(format_money(cost.target_usd, currency))
+        )
+    lines += ["", _markdown_inline(generated_from(portfolio)), ""]
 
     lines += [
         "## Selected items",
@@ -229,14 +253,18 @@ def budget_markdown(
         "|---|---|---:|---:|---:|",
     ]
     for line in cost.items:
-        item_total = (
-            line.item.one_time_usd
-            + line.item.recurring_usd_per_year * cost.window_months / 12.0
+        item_total = _item_window_total(line, cost)
+        item_cells = (
+            line.title,
+            line.type,
+            f"{line.fraction:g}",
+            format_money(item_total, currency),
+            format_money(line.funded_usd, currency),
         )
         lines.append(
-            f"| {line.title} | {line.type} | {line.fraction:g} | "
-            f"{format_money(item_total, currency)} | "
-            f"{format_money(line.funded_usd, currency)} |"
+            "| "
+            + " | ".join(_markdown_cell(cell) for cell in item_cells)
+            + " |"
         )
     lines.append("")
 
@@ -250,10 +278,14 @@ def budget_markdown(
             rule += "---|"
         lines += ["## Personnel", "", header, rule]
         for row in rows:
-            cells = list(row[:4])
+            personnel_cells = list(row[:4])
             if has_benchmarks:
-                cells.append(row[4] or "—")
-            lines.append("| " + " | ".join(cells) + " |")
+                personnel_cells.append(row[4] or "—")
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in personnel_cells)
+                + " |"
+            )
         lines.append("")
 
     lines += [
@@ -263,15 +295,22 @@ def budget_markdown(
         "|---|---:|",
     ]
     for label, amount in _category_rows(cost):
-        lines.append(f"| {label} | {format_money(amount, currency)} |")
+        category_cells = (label, format_money(amount, currency))
+        lines.append(
+            "| "
+            + " | ".join(_markdown_cell(cell) for cell in category_cells)
+            + " |"
+        )
     lines.append(
-        f"| **Total** | **{format_money(cost.total_usd, currency)}** |"
+        "| **Total** | **"
+        + _markdown_cell(format_money(cost.total_usd, currency))
+        + "** |"
     )
     lines.append("")
     if cost.fit is not None:
         lines += [
-            f"Target fit: {cost.fit:.0%} of "
-            f"{format_money(cost.target_usd or 0.0, currency)}.",
+            f"Target fit: {format_percent(cost.fit)} of "
+            f"{_markdown_inline(format_money(cost.target_usd or 0.0, currency))}.",
             "",
         ]
 
@@ -295,21 +334,23 @@ def budget_narrative(
         if item is None:
             continue
         share = (
-            f"{line.fraction:.0%} of "
-            f"{format_money(line.funded_usd / line.fraction, currency)}"
+            f"{format_percent(line.fraction)} of "
+            f"{format_money(_item_window_total(line, cost), currency)}"
             if line.fraction < 1
             else format_money(line.funded_usd, currency)
         )
         items.append(
             {
-                "title": item.title,
+                "title": _markdown_inline(item.title),
                 "what": item.what,
                 "evidence": item.evidence,
-                "cost_line": (
-                    f"{format_money(line.funded_usd, currency)} "
-                    f"({share} at fraction {line.fraction:g})"
-                    if line.fraction < 1
-                    else format_money(line.funded_usd, currency)
+                "cost_line": _markdown_inline(
+                    (
+                        f"{format_money(line.funded_usd, currency)} "
+                        f"({share} at fraction {line.fraction:g})"
+                        if line.fraction < 1
+                        else format_money(line.funded_usd, currency)
+                    )
                 ),
             }
         )
@@ -318,11 +359,17 @@ def budget_narrative(
         benchmark = _benchmark_text(roles.get(role), currency)
         personnel.append(
             {
-                "role": role,
+                "role": _markdown_inline(role),
                 "fte_months": f"{spend['fte_months']:g}",
-                "loaded": format_money(spend["loaded_usd"], currency),
-                "usd": format_money(spend["usd"], currency),
-                "benchmark": (f"Benchmark: {benchmark}." if benchmark else ""),
+                "loaded": _markdown_inline(
+                    format_money(spend["loaded_usd"], currency)
+                ),
+                "usd": _markdown_inline(format_money(spend["usd"], currency)),
+                "benchmark": (
+                    _markdown_inline(f"Benchmark: {benchmark}.")
+                    if benchmark
+                    else ""
+                ),
             }
         )
     env = Environment(
@@ -332,4 +379,4 @@ def budget_narrative(
         keep_trailing_newline=True,
     )
     template = env.get_template(_NARRATIVE_TEMPLATE)
-    return template.render(items=items, personnel=personnel)
+    return str(template.render(items=items, personnel=personnel))

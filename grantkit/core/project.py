@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import yaml
 
@@ -54,6 +54,10 @@ _LEGACY_FUNDER_KEYS = [
     "neo",
     "nuffield",
 ]
+
+
+class GrantProjectError(ValueError):
+    """A grant project configuration could not be read safely."""
 
 
 def find_placeholders(text: str) -> list[str]:
@@ -103,15 +107,27 @@ class SectionState:
 
     @property
     def over_word_limit(self) -> bool:
-        return bool(self.word_limit) and self.words > self.word_limit
+        return (
+            self.word_limit is not None
+            and self.word_limit > 0
+            and self.words > self.word_limit
+        )
 
     @property
     def over_char_limit(self) -> bool:
-        return bool(self.char_limit) and self.chars > self.char_limit
+        return (
+            self.char_limit is not None
+            and self.char_limit > 0
+            and self.chars > self.char_limit
+        )
 
     @property
     def over_page_limit(self) -> bool:
-        return bool(self.page_limit) and self.pages > self.page_limit
+        return (
+            self.page_limit is not None
+            and self.page_limit > 0
+            and self.pages > self.page_limit
+        )
 
 
 class GrantProject:
@@ -135,8 +151,37 @@ class GrantProject:
 
     def _load(self) -> None:
         if self.grant_yaml_path.exists():
-            with open(self.grant_yaml_path, "r", encoding="utf-8") as f:
-                self.config = yaml.safe_load(f) or {}
+            try:
+                with open(self.grant_yaml_path, "r", encoding="utf-8") as f:
+                    loaded = yaml.safe_load(f)
+            except yaml.YAMLError as exc:
+                raise GrantProjectError(
+                    f"Could not parse grant.yaml: {exc}"
+                ) from exc
+            except RecursionError as exc:
+                raise GrantProjectError(
+                    "Could not parse grant.yaml: document nesting is too deep"
+                ) from exc
+            except (OSError, UnicodeError) as exc:
+                raise GrantProjectError(
+                    f"Could not read grant.yaml: {exc}"
+                ) from exc
+            except MemoryError:
+                raise
+            except Exception as exc:
+                # PyYAML scalar constructors can leak non-YAMLError failures
+                # for hostile values. Normalize them at the file boundary.
+                raise GrantProjectError(
+                    f"Could not parse grant.yaml: {exc}"
+                ) from exc
+            if loaded is None:
+                self.config = {}
+            elif isinstance(loaded, dict):
+                self.config = loaded
+            else:
+                raise GrantProjectError(
+                    "grant.yaml must contain a YAML mapping"
+                )
         self._load_sections()
 
     def _grant_block(self) -> dict[str, Any]:
@@ -156,22 +201,39 @@ class GrantProject:
     def _raw_sections(self) -> list[dict[str, Any]]:
         """Locate the section list across the unified and legacy layouts."""
         sections = self.config.get("sections")
-        if sections:
-            return sections
+        if sections is not None:
+            return self._checked_section_list(sections, "sections")
 
         # Legacy: full application / outline blocks (Nuffield-style).
         for block_key in ("full_application", "outline"):
             block = self.config.get(block_key, {})
-            if isinstance(block, dict) and block.get("sections"):
-                return block["sections"]
+            if isinstance(block, dict) and block.get("sections") is not None:
+                return self._checked_section_list(
+                    block["sections"], f"{block_key}.sections"
+                )
 
         # Legacy: funder-nested sections (e.g. nsf.sections in old examples).
         for funder_key in _LEGACY_FUNDER_KEYS:
             block = self.config.get(funder_key, {})
-            if isinstance(block, dict) and block.get("sections"):
-                return block["sections"]
+            if isinstance(block, dict) and block.get("sections") is not None:
+                return self._checked_section_list(
+                    block["sections"], f"{funder_key}.sections"
+                )
 
         return []
+
+    @staticmethod
+    def _checked_section_list(
+        value: Any, location: str
+    ) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            raise GrantProjectError(f"{location} must be a list")
+        for index, entry in enumerate(value):
+            if not isinstance(entry, dict):
+                raise GrantProjectError(
+                    f"{location}[{index}] must be a mapping"
+                )
+        return cast(list[dict[str, Any]], value)
 
     def _resolve_section_path(self, file_rel: Optional[str], sid: str) -> Path:
         """Resolve a section file to an absolute path, trying common bases."""
@@ -194,10 +256,35 @@ class GrantProject:
 
     def _load_sections(self) -> None:
         self.sections = []
-        for raw in self._raw_sections():
-            sid = raw.get("id", "")
-            title = raw.get("title") or sid.replace("_", " ").title()
-            file_rel = raw.get("file")
+        for index, raw in enumerate(self._raw_sections()):
+            raw_sid = raw.get("id", "")
+            if not isinstance(raw_sid, str):
+                raise GrantProjectError(
+                    f"sections[{index}].id must be a string"
+                )
+            sid = raw_sid
+            raw_title = raw.get("title")
+            if raw_title is not None and not isinstance(raw_title, str):
+                raise GrantProjectError(
+                    f"sections[{index}].title must be a string"
+                )
+            title = raw_title or sid.replace("_", " ").title()
+            raw_file = raw.get("file")
+            if raw_file is not None and not isinstance(raw_file, str):
+                raise GrantProjectError(
+                    f"sections[{index}].file must be a string or null"
+                )
+            file_rel = raw_file
+            limits: dict[str, Optional[int]] = {}
+            for key in ("word_limit", "char_limit", "page_limit"):
+                value = raw.get(key)
+                if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool)
+                ):
+                    raise GrantProjectError(
+                        f"sections[{index}].{key} must be an integer or null"
+                    )
+                limits[key] = value
             path = self._resolve_section_path(file_rel, sid)
             section = SectionState(
                 id=sid,
@@ -210,9 +297,9 @@ class GrantProject:
                 ),
                 path=path,
                 required=bool(raw.get("required", True)),
-                word_limit=raw.get("word_limit"),
-                char_limit=raw.get("char_limit"),
-                page_limit=raw.get("page_limit"),
+                word_limit=limits["word_limit"],
+                char_limit=limits["char_limit"],
+                page_limit=limits["page_limit"],
                 format=(
                     raw["format"]
                     if raw.get("format") in ("prose", "fields")
@@ -304,7 +391,7 @@ class GrantProject:
         value = self._get("program")
         if value:
             return str(value)
-        return self.pack.program if self.pack else ""
+        return (self.pack.program or "") if self.pack else ""
 
     @property
     def deadline(self) -> Optional[str]:
@@ -320,7 +407,7 @@ class GrantProject:
         if isinstance(full_app, dict) and "accepts_markdown" in full_app:
             return bool(full_app["accepts_markdown"])
         if self.pack:
-            return self.pack.accepts_markdown
+            return bool(self.pack.accepts_markdown)
         return True
 
     @property
@@ -335,7 +422,7 @@ class GrantProject:
         """Locate a references.bib, if one exists."""
         explicit = self._get("references")
         if explicit:
-            candidate = self.root / explicit
+            candidate = self.root / str(explicit)
             if candidate.exists():
                 return candidate
         for candidate in (
@@ -363,6 +450,13 @@ class GrantProject:
         """
         value = self._get("budget_model")
         return value if isinstance(value, dict) else None
+
+    @property
+    def has_budget_model(self) -> bool:
+        """Whether a ``budget_model`` key was declared, valid or not."""
+        return "budget_model" in self.config or (
+            "budget_model" in self._grant_block()
+        )
 
     @property
     def budget_path(self) -> Optional[Path]:

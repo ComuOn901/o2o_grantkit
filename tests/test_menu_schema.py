@@ -100,6 +100,58 @@ def test_menu_item_status_vocabulary(portfolio_menu):
     assert any("invalid status" in e for e in validate_menu(portfolio_menu))
 
 
+def test_menu_item_status_wrong_shape_is_an_error(portfolio_menu):
+    portfolio_menu["items"][1]["status"] = []
+    assert any("invalid status" in e for e in validate_menu(portfolio_menu))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("overheads", "provenance"),
+        ("unit_costs", "module", "derivation"),
+        ("items", 1, "type"),
+        ("items", 1, "revenue_unlock"),
+    ],
+    ids=("overhead-provenance", "unit-derivation", "type", "revenue"),
+)
+def test_menu_known_text_fields_reject_non_strings(portfolio_menu, path):
+    _set_path(portfolio_menu, path, ["not", "text"])
+    assert validate_menu(portfolio_menu)
+
+
+@pytest.mark.parametrize("value", ["\ud800", "\x1b[31m", "\x00"])
+def test_menu_text_fields_reject_unsafe_unicode(portfolio_menu, value):
+    portfolio_menu["items"][1]["title"] = value
+    assert any("title" in error for error in validate_menu(portfolio_menu))
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("unit_costs", "module", "provenance"), [1]),
+        (("items", 1, "dependencies"), [123]),
+        (("items", 1, "provenance"), [""]),
+    ],
+    ids=("unit-provenance", "dependencies", "item-provenance"),
+)
+def test_menu_string_lists_validate_entries(portfolio_menu, path, value):
+    _set_path(portfolio_menu, path, value)
+    assert validate_menu(portfolio_menu)
+
+
+def test_menu_resourcing_and_unit_keys_must_be_strings(portfolio_menu):
+    portfolio_menu["unit_costs"][1] = {
+        "usd_per_unit": 2.5,
+    }
+    portfolio_menu["items"][1]["resourcing"]["fte_months"][1] = 2
+    portfolio_menu["items"][3]["resourcing"]["units"][2] = 3
+    errors = validate_menu(portfolio_menu)
+    assert any("unit_costs keys" in error for error in errors)
+    assert any("fte_months' keys" in error for error in errors)
+    assert any("units' keys" in error for error in errors)
+
+
 def test_menu_item_duration_must_be_int(portfolio_menu):
     portfolio_menu["items"][1]["duration_months"] = "nine"
     assert any("duration_months" in e for e in validate_menu(portfolio_menu))
@@ -108,6 +160,11 @@ def test_menu_item_duration_must_be_int(portfolio_menu):
 def test_menu_item_duration_bool_rejected(portfolio_menu):
     # YAML `duration_months: true` is a bool, not an int.
     portfolio_menu["items"][1]["duration_months"] = True
+    assert any("duration_months" in e for e in validate_menu(portfolio_menu))
+
+
+def test_menu_item_duration_must_fit_numeric_model(portfolio_menu):
+    portfolio_menu["items"][1]["duration_months"] = 10**10000
     assert any("duration_months" in e for e in validate_menu(portfolio_menu))
 
 
@@ -311,6 +368,57 @@ def test_rates_component_basis_vocabulary(portfolio_rates):
     assert any("invalid basis" in e for e in validate_rates(portfolio_rates))
 
 
+def test_rates_component_basis_wrong_shape_is_an_error(portfolio_rates):
+    portfolio_rates["roles"][0]["components"][0]["basis"] = []
+    assert any("invalid basis" in e for e in validate_rates(portfolio_rates))
+
+
+def test_rates_component_amount_must_be_non_negative(portfolio_rates):
+    portfolio_rates["roles"][0]["components"][0]["amount_usd"] = -0.01
+    errors = validate_rates(portfolio_rates)
+    assert any(
+        "amount_usd" in error and "non-negative" in error for error in errors
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("scenario",),
+        ("jurisdiction",),
+        ("method",),
+        ("roles", 0, "soc"),
+        ("roles", 0, "components", 0, "name"),
+        ("roles", 0, "components", 0, "source"),
+        ("roles", 0, "benchmark", "source"),
+    ],
+    ids=(
+        "scenario",
+        "jurisdiction",
+        "method",
+        "soc",
+        "component-name",
+        "component-source",
+        "benchmark-source",
+    ),
+)
+def test_rates_known_text_fields_reject_non_strings(portfolio_rates, path):
+    _set_path(portfolio_rates, path, ["not", "text"])
+    assert validate_rates(portfolio_rates)
+
+
+def test_rates_text_fields_reject_lone_unicode_surrogates(portfolio_rates):
+    portfolio_rates["provider"] = "\ud800"
+    assert any(
+        "provider" in error for error in validate_rates(portfolio_rates)
+    )
+
+
+def test_rates_provenance_entries_must_be_strings(portfolio_rates):
+    portfolio_rates["roles"][0]["provenance"] = [123]
+    assert any("provenance" in e for e in validate_rates(portfolio_rates))
+
+
 def test_rates_component_requires_name_and_amount(portfolio_rates):
     component = portfolio_rates["roles"][0]["components"][0]
     del component["name"]
@@ -440,6 +548,38 @@ def test_selection_status_vocabulary(portfolio_selections):
     assert any("invalid status" in e for e in validate_selection(selection))
 
 
+def test_selection_status_wrong_shape_is_an_error(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["status"] = []
+    assert any("invalid status" in e for e in validate_selection(selection))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("org_base", "item"),
+        ("selections", 0, "item"),
+        ("selections", 0, "note"),
+        ("notes",),
+    ],
+    ids=("org-base-item", "line-item", "line-note", "notes"),
+)
+def test_selection_known_text_fields_reject_non_strings(
+    portfolio_selections, path
+):
+    selection = _selection(portfolio_selections)
+    _set_path(selection, path, ["not", "text"])
+    assert validate_selection(selection)
+
+
+def test_selection_text_fields_reject_lone_unicode_surrogates(
+    portfolio_selections,
+):
+    selection = _selection(portfolio_selections)
+    selection["funder"] = "\ud800"
+    assert any("funder" in error for error in validate_selection(selection))
+
+
 def test_selection_target_must_be_number(portfolio_selections):
     selection = _selection(portfolio_selections)
     selection["target_usd"] = "2M"
@@ -462,6 +602,12 @@ def test_unrepresentably_large_number_is_rejected(portfolio_selections):
     selection = _selection(portfolio_selections)
     selection["target_usd"] = 10**10000
     assert any("target_usd" in e for e in validate_selection(selection))
+
+
+def test_unrepresentably_large_window_is_rejected(portfolio_selections):
+    selection = _selection(portfolio_selections)
+    selection["window_months"] = 10**10000
+    assert any("window_months" in e for e in validate_selection(selection))
 
 
 @pytest.mark.parametrize("value", NON_FINITE)
