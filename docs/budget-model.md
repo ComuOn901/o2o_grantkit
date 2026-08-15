@@ -4,7 +4,8 @@
 documents instead of a hand-maintained spreadsheet: your org's priced
 **menu** of work items, a **rates** file from a rates provider, and one
 **selection** per proposal. The compiled budget is a pure function of
-those inputs — same files, same numbers, byte for byte — and the
+those inputs: structured JSON and saved Markdown are deterministic; the
+interactive Rich table adapts to terminal width. The
 integrity gates catch the failure mode spreadsheets invite: quietly
 selling the same work twice.
 
@@ -35,6 +36,11 @@ org-portfolio/
 
 For one-proposal setups a single `selection.yaml` beside `menu.yaml`
 is also accepted.
+
+Portfolio files must be UTF-8 YAML mappings. Duplicate mapping keys are
+rejected instead of silently taking the last value; YAML aliases and standard
+merge-key overrides remain supported. A path named `selections`, when present,
+must be a directory.
 
 ```bash
 grantkit budget org-portfolio --selection funder-a   # rich tables
@@ -177,6 +183,7 @@ Errors:
 | `org_base_type` | `org_base.item` exists but its type is not `org-base`. |
 | `selection_duplicate_item` | The same item appears twice in one selection. |
 | `cofunding_over_allocated` | The co-funding gate — see below. |
+| `budget_non_finite` | Individually valid finite inputs overflowed the compiler's finite numeric range; reduce their magnitudes. |
 | `budget_currency_mismatch` | Bound rule pack only: the portfolio and the funder's caps use different currencies, so cap checks cannot run. |
 | `budget_over_total_cap` | Bound rule pack only: the compiled total exceeds the funder's published total cap. |
 
@@ -184,7 +191,7 @@ Warnings (advisory heuristics, clearly labeled — not funder rules):
 
 | Rule | Meaning |
 |------|---------|
-| `dependency_unfunded` | A funded item depends on `planned` work that no live/awarded selection (nor this one) funds. |
+| `dependency_unfunded` | A funded regular or `org_base` item depends on `planned` work that no live/awarded selection (nor this one) funds. |
 | `over_target` | The compiled total exceeds the advisory `target_usd` (a target is an ask, not a cap). |
 | `load_factor_suspicious` / `components_mismatch` | Rates heuristics — see [the rates contract](rates-contract.md). |
 | `budget_over_annual_cap` | Bound rule pack only: total x 12/window_months exceeds the funder's annual cap. A uniform-spread approximation, hence a warning — confirm against your actual phasing. |
@@ -221,18 +228,19 @@ With a binding in place:
   selection with no flags.
 
 A broken binding is itself a check error: `budget_model_invalid` (the
-block has no `portfolio` path), `budget_model_unreadable` (the
-portfolio directory will not load), or `unknown_selection` (the bound
-id is not in the portfolio).
+block is not a mapping or has invalid `portfolio` / `selection` values),
+`budget_model_unreadable` (the portfolio directory will not load), or
+`unknown_selection` (the bound id is not in the portfolio).
 
 ## The budget verb
 
 ```
 grantkit budget [PATH]
-  --selection TEXT   selection id (required for multi-selection
-                     portfolios unless PATH is a bound grant project)
-  --check            run the gates only; exit 1 on errors, 2 on an
-                     unreadable portfolio
+  --selection TEXT   selection id to compile, or an optional scope for
+                     --check; required to compile a multi-selection
+                     portfolio unless PATH binds one
+  --check            run the gates only; exit 1 on findings that are
+                     errors, 2 on selection/configuration/loading failures
   --json             emit the full structured compilation as JSON
                      (with --check, the gate findings)
   --output PATH      write the markdown budget document to a file

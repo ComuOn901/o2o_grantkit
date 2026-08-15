@@ -108,7 +108,8 @@ per-selection gates to one selection when given an id, and applies a
 `FunderPack`'s `budget_rules` caps to each compiled total when given a
 pack. An id absent from the portfolio produces an `unknown_selection`
 error finding. `compile_selection` assumes the gates passed — an unresolved
-item, role, or unit raises `KeyError`. See the
+item, role, or unit raises `KeyError`; arithmetic outside the finite float
+range is reported by `run_gates` as `budget_non_finite`. See the
 [budget model](budget-model.md) and the
 [rates contract](rates-contract.md).
 

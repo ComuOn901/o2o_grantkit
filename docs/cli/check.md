@@ -14,7 +14,7 @@ straight into CI or a pre-submission gate.
 |--------|-------------|
 | `--json` | Emit the findings as JSON (the `checks` block of `status.json`). |
 | `--strict` | Treat warnings as failures too (non-zero exit on any warning). |
-| `--urls` | Also verify that URLs resolve. This is the only check that touches the network. |
+| `--urls` | Also verify that URLs resolve. This opt-in check touches the network. |
 
 ## What is checked
 
@@ -28,7 +28,9 @@ straight into CI or a pre-submission gate.
 | `unresolved_citation` | error | A `[@key]` that isn't in `references.bib`. |
 | `missing_references_bib`, `citation_syntax` | warning | Citations used with no bib, or malformed citation syntax. |
 | `budget_inconsistency` | warning | Fringe/indirect totals don't match their rates. |
-| `budget_over_total_cap`, `budget_over_annual_cap` | error | Budget exceeds a funder cap from the rule pack. |
+| `budget_over_total_cap` | error | A legacy budget or bound selection exceeds a published total cap. |
+| `budget_over_annual_cap` | error/warning | Error for a legacy budget's actual annual total; warning for a bound selection's uniform-spread annualization. |
+| `budget_non_finite` | error | Finite budget-model inputs overflowed the compiler's finite numeric range. |
 | `salary_above_market`, `salary_market_check` | error/warning | BLS OEWS salary sanity (only when `BLS_API_KEY` is set). |
 | `nsf_compliance`, `nsf_missing_intellectual_merit`, … | error/warning | NSF PAPPG content engine (prohibited URLs/emails, required statements). |
 | `spelling_locale` | warning | US spelling in an en-GB grant (or vice versa). |
@@ -50,6 +52,12 @@ If a `budget.yaml` is present, `check` computes its totals and flags:
 BLS salary and GSA per-diem lookups run only when `BLS_API_KEY` / `GSA_API_KEY`
 are set in the environment (they make network calls), so `check` stays fully
 offline by default.
+
+When `grant.yaml` carries a `budget_model` binding, `check` also loads the
+menu/rates/selection portfolio, runs its schema and integrity gates, and
+applies the bound funder pack's caps to the compiled selection. A malformed
+binding is an error rather than silently disabling these checks. See the
+[budget model](../budget-model.md).
 
 ## Example
 
