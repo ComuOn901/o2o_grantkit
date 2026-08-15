@@ -15,6 +15,13 @@ def _invoke(*args):
     return CliRunner().invoke(main, ["budget", *map(str, args)])
 
 
+def test_budget_help_uses_plain_terminal_markup():
+    result = _invoke("--help")
+    assert result.exit_code == 0
+    assert "budget_model" in result.output
+    assert "``budget_model:``" not in result.output
+
+
 # -- compile output modes -----------------------------------------------
 
 
@@ -57,6 +64,17 @@ def test_budget_output_writes_markdown(make_portfolio, tmp_path):
     assert "## Category summary" in text
     assert "eggnest-employer 0.2.0" in text
     assert "## Narrative skeleton" not in text  # only with --narrative
+
+
+def test_budget_output_write_error_is_clean(make_portfolio, tmp_path):
+    out = tmp_path / "missing" / "budget.md"
+    result = _invoke(
+        "--selection", "sel-live-a", "--output", out, make_portfolio()
+    )
+    assert result.exit_code == 2
+    assert "Could not write budget document" in result.stderr
+    assert "Traceback" not in result.output
+    assert not out.exists()
 
 
 def test_budget_narrative_includes_evidence(make_portfolio):
@@ -106,16 +124,35 @@ def test_budget_json_with_output_writes_both(make_portfolio, tmp_path):
     )
     assert result.exit_code == 0
     assert "## Category summary" in out.read_text(encoding="utf-8")
-    assert '"total_usd": 245056.25' in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["total_usd"] == 245056.25
+    assert "Wrote budget document" in result.stderr
 
 
-def test_budget_json_takes_precedence_over_narrative(make_portfolio):
+def test_budget_json_rejects_narrative_without_output(make_portfolio):
     result = _invoke(
         "--selection", "sel-live-a", "--json", "--narrative", make_portfolio()
     )
+    assert result.exit_code == 2
+    assert "requires --output" in result.output
+
+
+def test_budget_json_and_narrative_output_are_both_honored(
+    make_portfolio, tmp_path
+):
+    out = tmp_path / "budget.md"
+    result = _invoke(
+        "--selection",
+        "sel-live-a",
+        "--json",
+        "--narrative",
+        "--output",
+        out,
+        make_portfolio(),
+    )
     assert result.exit_code == 0
-    assert "## Narrative skeleton" not in result.stdout
-    json.loads(result.stdout)
+    assert json.loads(result.stdout)["total_usd"] == 245056.25
+    assert "## Narrative skeleton" in out.read_text(encoding="utf-8")
 
 
 def test_budget_compile_surfaces_warnings_on_stderr(
@@ -184,7 +221,8 @@ def test_budget_malformed_menu_exit_2(make_portfolio):
 def test_budget_no_selections_exit_2(make_portfolio):
     result = _invoke(make_portfolio(selections=[]))
     assert result.exit_code == 2
-    assert "(none)" in result.output
+    assert "has no selections" in result.output
+    assert "selections/*.yaml" in result.output
 
 
 def test_budget_compile_refuses_on_gate_errors(
@@ -195,6 +233,20 @@ def test_budget_compile_refuses_on_gate_errors(
     result = _invoke("--selection", "sel-live-a", root)
     assert result.exit_code == 1
     assert "cofunding_over_allocated" in result.output
+
+
+def test_budget_json_reports_gate_errors_as_json(
+    make_portfolio, portfolio_selections
+):
+    portfolio_selections[0]["selections"].append(
+        {"item": "zzz", "fraction": 0.1}
+    )
+    root = make_portfolio(selections=portfolio_selections)
+    result = _invoke("--selection", "sel-live-a", "--json", root)
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert any(item["rule"] == "unknown_item" for item in payload["items"])
+    assert "Cannot compile" in result.stderr
 
 
 # -- budget --check -----------------------------------------------------
@@ -248,6 +300,18 @@ def test_budget_check_warnings_exit_0(make_portfolio, portfolio_selections):
 def test_budget_check_empty_portfolio_passes(make_portfolio):
     result = _invoke("--check", make_portfolio(selections=[]))
     assert result.exit_code == 0
+
+
+def test_budget_check_rejects_output_and_narrative_flags(
+    make_portfolio, tmp_path
+):
+    root = make_portfolio()
+    output_result = _invoke("--check", "--output", tmp_path / "x.md", root)
+    narrative_result = _invoke("--check", "--narrative", root)
+    assert output_result.exit_code == 2
+    assert "--output cannot be used with --check" in output_result.output
+    assert narrative_result.exit_code == 2
+    assert "--narrative cannot be used with --check" in narrative_result.output
 
 
 def test_budget_check_scopes_to_selection(
@@ -397,6 +461,18 @@ def test_check_unknown_selection_is_an_error(make_grant, make_portfolio):
     hits = [i for i in result.items if i.rule == "unknown_selection"]
     assert len(hits) == 1
     assert "sel-live-a" in hits[0].message
+
+
+def test_check_missing_selection_binding_has_clear_message(
+    make_grant, make_portfolio
+):
+    grant_root = _bound_grant(make_grant, make_portfolio(), selection=None)
+    result = run_checks(GrantProject(grant_root))
+    hits = [item for item in result.items if item.rule == "unknown_selection"]
+    assert len(hits) == 1
+    assert "names no selection" in hits[0].message
+    assert "'None'" not in hits[0].message
+    assert "selection: <id>" in hits[0].message
 
 
 def test_check_auto_binds_single_selection(

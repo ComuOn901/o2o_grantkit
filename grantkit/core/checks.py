@@ -539,14 +539,22 @@ def _check_selection_model(project: "GrantProject") -> list[CheckItem]:
         or portfolio.get_selection(selection_id) is None
     ):
         available = ", ".join(portfolio.selection_ids) or "(none)"
+        if selection_id is None:
+            message = (
+                "budget_model names no selection, but the portfolio does "
+                "not have exactly one; add 'selection: <id>' "
+                f"(available: {available})."
+            )
+        else:
+            message = (
+                f"budget_model selection '{selection_id}' not found in "
+                f"the portfolio (available: {available})."
+            )
         return [
             CheckItem(
                 level="error",
                 rule="unknown_selection",
-                message=(
-                    f"budget_model selection '{selection_id}' not "
-                    f"found in the portfolio (available: {available})."
-                ),
+                message=message,
             )
         ]
     return run_gates(portfolio, selection_id, project.pack)

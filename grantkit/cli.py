@@ -360,8 +360,17 @@ def budget(
     """Compile a portfolio selection into a budget (menu x rates).
 
     PATH is a portfolio directory (menu.yaml + rates.yaml + selections/)
-    or a grant project whose grant.yaml binds one via ``budget_model:``.
+    or a grant project whose grant.yaml binds one via a budget_model block.
     """
+    if check_only and output is not None:
+        raise click.UsageError("--output cannot be used with --check")
+    if check_only and narrative:
+        raise click.UsageError("--narrative cannot be used with --check")
+    if as_json and narrative and output is None:
+        raise click.UsageError(
+            "--narrative with --json requires --output for the markdown"
+        )
+
     portfolio, selection_id, pack = _load_portfolio_target(path, selection_id)
 
     if check_only:
@@ -369,7 +378,9 @@ def budget(
             _resolve_selection(portfolio, selection_id)
         result = CheckResult(items=run_gates(portfolio, selection_id, pack))
         if as_json:
-            sys.stdout.write(json.dumps(result.to_dict(), indent=2) + "\n")
+            sys.stdout.write(
+                json.dumps(result.to_dict(), indent=2, allow_nan=False) + "\n"
+            )
         else:
             _print_checks(result)
         raise SystemExit(1 if result.failed() else 0)
@@ -377,9 +388,14 @@ def budget(
     selection = _resolve_selection(portfolio, selection_id)
     result = CheckResult(items=run_gates(portfolio, selection.id, pack))
     if result.errors:
-        _print_checks(result)
+        if as_json:
+            sys.stdout.write(
+                json.dumps(result.to_dict(), indent=2, allow_nan=False) + "\n"
+            )
+        else:
+            _print_checks(result)
         err_console.print(
-            "[red]Cannot compile: fix the errors above (or run "
+            "[red]Cannot compile: fix the reported errors (or run "
             "budget --check).[/red]"
         )
         raise SystemExit(1)
@@ -393,11 +409,21 @@ def budget(
         payload = budget_markdown(
             portfolio, selection, cost, narrative=narrative
         )
-        Path(output).write_text(payload, encoding="utf-8")
-        console.print(f"[green]Wrote budget document to {output}[/green]")
+        try:
+            Path(output).write_text(payload, encoding="utf-8")
+        except OSError as exc:
+            err_console.print(
+                f"[red]Could not write budget document to {output}: "
+                f"{exc}[/red]"
+            )
+            raise SystemExit(2)
+        destination = err_console if as_json else console
+        destination.print(f"[green]Wrote budget document to {output}[/green]")
     if as_json:
         payload_json = budget_json(portfolio, selection, cost)
-        sys.stdout.write(json.dumps(payload_json, indent=2) + "\n")
+        sys.stdout.write(
+            json.dumps(payload_json, indent=2, allow_nan=False) + "\n"
+        )
     elif narrative and not output:
         sys.stdout.write(
             budget_markdown(portfolio, selection, cost, narrative=True)
@@ -447,6 +473,13 @@ def _resolve_selection(
 ) -> Selection:
     """Pick the selection to compile; exits 2 when ambiguous/unknown."""
     if selection_id is None:
+        if not portfolio.selections:
+            err_console.print(
+                "[red]This portfolio has no selections.[/red]\n"
+                "Add selections/*.yaml, or add a single selection.yaml "
+                "beside menu.yaml."
+            )
+            raise SystemExit(2)
         if len(portfolio.selections) == 1:
             return portfolio.selections[0]
         available = ", ".join(portfolio.selection_ids) or "(none)"
