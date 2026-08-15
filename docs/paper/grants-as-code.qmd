@@ -50,8 +50,8 @@ Max-voice pass (longform pipeline; fable) → academic-referee cycle if
 journal-bound → final reconcile pass. §3 re-verified 2026-08-15 against
 grantkit feat/budget-model @ f53da71 and eggnest-employer feat/rates-export
 @ 52a0c6f (rates_export.py + emitted export);
-§4 diligence figures still re-verify against ballmer-proposal-2026 PR #17 /
-CAMPAIGN.md.
+§4 diligence figures still re-verify against the gated diligence model in
+its private org repo.
 Numbers policy: every figure cites a receipt or is labeled an assumption;
 no-fabricated-mechanisms applies to every tool description in §2 (described
 from their docs, cited, or cut).
@@ -834,8 +834,8 @@ the model, not through a funder-facing interface.
 
 # Case study {#sec-case}
 
-<!-- Reconcile pass: every figure in this section re-verifies against
-ballmer-proposal-2026 PR #17 / CAMPAIGN.md before publication. -->
+<!-- Reconcile pass: every figure in this section re-verifies against the
+gated diligence model (private org repo) before publication. -->
 
 The pipeline's first run on organization data was an August 2026
 diligence sprint at The Axiom Foundation, presented here with funders
