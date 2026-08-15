@@ -39,8 +39,10 @@ claims carry the adjudicated verdicts; §3 written to v03-design.md (the v0.3
 build spec); §4 numbers carried verbatim from the skeleton (gated diligence
 session). Remaining pipeline before publication (per standing directives):
 sol adversarial review r1 → fixes → Max-voice pass (longform pipeline;
-fable) → academic-referee cycle if journal-bound → reconcile pass checking
-§3 against final v0.3 code and §4 against ballmer-proposal-2026 PR #17 /
+fable) → academic-referee cycle if journal-bound → reconcile pass: §3 DONE
+2026-08-14 (against grantkit feat/budget-model @ 9ff0a84 and
+eggnest-employer feat/rates-export rates_export.py + emitted export);
+§4 diligence figures still re-verify against ballmer-proposal-2026 PR #17 /
 CAMPAIGN.md.
 Numbers policy: every figure cites a receipt or is labeled an assumption;
 no-fabricated-mechanisms applies to every tool description in §2 (described
@@ -78,7 +80,7 @@ self-reported forms; the novelty is enforcement timing plus automation.]
 
 **C3 — Rule-derived personnel rates.** Loaded personnel costs computed from
 encoded law — employer payroll taxes by jurisdiction, retirement contribution
-caps (IRS §415(c)/§402(g)), benefit schedules — rather than flat multipliers,
+caps (IRS §415(c)/§402(g)) — rather than flat multipliers,
 with market benchmarks (BLS OES, sourced percentiles) attached per role. The
 budget's comp-justification appendix becomes a generated artifact. [Verdict:
 partial prior art. The computation exists in payroll engines and web
@@ -572,14 +574,19 @@ English-language sweep: *novel* means no prior art found, not proven absent.
 
 # The pipeline {#sec-pipeline}
 
-<!-- verify against final v0.3 code before publication -->
+<!-- Reconciled 2026-08-14 against shipped v0.3 (grantkit feat/budget-model
+@ 9ff0a84: menu/{schema,engine,gates,render,loader}.py, docs/budget-model.md,
+docs/rates-contract.md) and the reference provider (eggnest-employer
+feat/rates-export: rates_export.py, taxes.py, retirement.py, README, emitted
+axiom-rates.yaml). Re-verify only if those branches change before
+publication. -->
 
 grantkit 0.3 introduces the budget model: three YAML document types, a
 pure-function engine, a set of gates, and a new CLI verb, `budget`,
 alongside the existing pack verbs (`check` and `build` among them). The
 design keeps a strict engine/data boundary: grantkit ships the schemas, the
 engine, and synthetic fixtures; an organization's menus, rates, and
-selections live in the organization's own repositories. Everything is
+selections live in the organization's own repositories. The budget path is
 stateless and local-first — no network calls, no model in the loop — and
 compilation is deterministic: the same inputs produce the same bytes, with
 money held as floats internally and rendered as whole dollars only at
@@ -588,8 +595,8 @@ output.
 ## Three documents
 
 **The menu** (`grantkit-menu/v0`) is the organization's priced work-item
-catalog. It carries org-level economics — named overheads such as a
-fiscal-sponsorship rate, each with provenance — and named unit costs, each a
+catalog. It carries org-level economics — in v0.3 a single overhead, the
+fiscal-sponsorship rate, with its provenance — and named unit costs, each a
 unit price with a derivation string and a provenance list. Every item has an
 id; a type (free vocabulary, with recommended values program-coverage,
 platform, research-eval, field, and org-base); a title; a one-sentence
@@ -608,24 +615,49 @@ models emit fee-inclusive totals — @sec-case shows what happens without it.
 **The rates file** (`grantkit-rates/v0`) is a contract with a rates
 provider, not a place to type numbers. It must name its provider and
 version, its generation date, and its currency, and may carry a scenario id,
-a jurisdiction, and a prose description of the method. The reference
-provider is eggnest-employer, which derives loaded cost as base salary plus
-employer payroll taxes computed from encoded law (via PolicyEngine), plus an
-employer retirement contribution applied as a rate against base and capped
-by statute, plus a configured benefits schedule. Each role carries a
+a jurisdiction, and a prose description of the method. Each role carries a
 required annual loaded cost, a recommended base, an optional SOC code, an
 optional component breakdown, and an optional benchmark. Every component
-states its basis from a closed vocabulary — computed, configured, or assumed
-— and its source; the benchmark block carries market provenance, for example
-a BLS OEWS percentile with its exact series and value. grantkit validates
-presence and types; it does not recompute a provider's law-based numbers —
-that is the provider's job, under the provider's tests. Two advisory
-warnings police the seam. A load-factor check flags any role whose
-loaded-to-base ratio falls below 1.05 ("loaded equals base — pasted base as
-loaded?") or above 2.0 — a bug class observed in the wild, when three roles
-in a seeded menu carried base salary pasted as loaded cost. A components
-check flags any breakdown that misses the stated loaded cost by more than a
-dollar.
+states its basis from a closed vocabulary — computed (derived from encoded
+rules or data), configured (a scenario input someone chose), or assumed (a
+placeholder) — plus an optional source string; the benchmark block carries
+market provenance as a source, a percentile, and a dollar value, to which
+the reference provider adds the organization's own computed percentile
+against that market, in percent. grantkit validates presence and types; it
+does not recompute a provider's law-based numbers — that is the provider's
+job, under the provider's tests.
+
+The reference provider, eggnest-employer, derives a role's loaded cost as
+the guaranteed employer cost: base salary, plus the employer retirement
+contribution, plus configured other compensation, plus employer payroll
+taxes computed from encoded law via policyengine-us — Social Security,
+Medicare, and federal unemployment among them. Bonus and equity are
+excluded from the guaranteed package, and health and other benefits are not
+modeled; the method paragraph in every export states the exclusion. Two
+precision caveats travel with the tax figures. The state unemployment rate
+is a state-average default parameter unless the scenario overrides it — not
+the organization's experience rate. And the New York MCTMT is computed on
+aggregate organizational payroll through the encoded bracket schedules,
+then allocated to roles pro rata, so per-role local-tax figures are an
+allocation, not a per-role legal calculation. The retirement cap is a
+modeling assumption stated as one: the provider computes the employer
+maximum as the IRS 415(c) annual-additions limit minus the 402(g) elective
+limit, both resolved from policyengine-us parameters — conservative, since
+the identity assumes the employee defers the full elective limit — and
+labels the component basis-computed, against basis-configured when a
+scenario fixes the amount or the cap instead. The same honesty governs
+degradation: the employer-side payroll variables live on an unmerged
+policyengine-us fork branch today, and against a stock install the provider
+computes Social Security and Medicare only, emitting an explicit warning
+and a method-paragraph sentence saying so — the fallback never passes
+silently.
+
+Two advisory warnings police the seam. A load-factor check flags any role
+whose loaded-to-base ratio falls below 1.05 ("loaded equals base — pasted
+base as loaded?") or above 2.0 — a bug class observed in the wild, when
+three roles in a seeded menu carried base salary pasted as loaded cost. A
+components check flags any breakdown that misses the stated loaded cost by
+more than a dollar.
 
 **A selection** (`grantkit-selection/v0`) is a proposal: an id, a funder, a
 status from a closed vocabulary (draft, live, awarded, withdrawn, declined),
@@ -633,9 +665,9 @@ an optional advisory target, a required window in months, an optional
 org-base allocation (an item that must be of type org-base, with a fraction
 between zero and one), and an ordered list of selected items, each with a
 co-funding fraction. Explicit zero fractions are preserved and meaningful:
-an item selected at fraction 0.0 with a note is *declared, not billed* — the
-funder sees that the work exists in the plan and that this proposal pays
-none of it.
+an item selected at fraction 0.0 — optionally with a note — is *declared,
+not billed*: the funder sees that the work exists in the plan and that this
+proposal pays none of it.
 
 A portfolio directory holds the menu, the rates file, and a `selections/`
 directory of proposals (a single selection file beside the menu also works
@@ -672,25 +704,27 @@ of type org-base; the same item listed twice in one selection; and the C2
 gate, `cofunding_over_allocated`, which for every item sums fractions
 across all selections with status live or awarded and fails if the sum
 exceeds one (with a 1e-9 tolerance), naming each contributing selection and
-its fraction in the message. The same rule applies to org-base fractions
-per org-base item. Draft, withdrawn, and declined selections are excluded
+its fraction in the message. Org-base fractions count toward the same
+per-item sums, labeled as org-base contributions in the finding. Draft,
+withdrawn, and declined selections are excluded
 by design: the invariant binds simultaneous live applications, drafts are
 free to over-plan, and the gate fires when they go live.
 
 The warnings: a funded item depends on work that is neither shipped,
-in-flight, nor funded in any live or awarded selection — the proposal
-assumes work nobody has funded; the compiled total exceeds the declared
-target (advisory — a target is an ask, not a cap); and the rates-contract
-heuristics above. Inside a grant project bound to a selection, the funder
-pack's budget caps also apply to the compiled total as errors, reusing the
-existing cap identifiers, with annual caps approximated as total times
-twelve over the window months (documented as an approximation).
+in-flight, funded in any live or awarded selection, nor funded by the
+selection itself — the proposal assumes work nobody has funded; the
+compiled total exceeds the declared target (advisory — a target is an ask,
+not a cap); and the rates-contract heuristics above. Inside a grant project
+bound to a selection, the funder pack's total cap also applies to the
+compiled total as an error, reusing the existing cap identifier; the annual
+cap — approximated as total times twelve over the window months, a
+uniform-spread approximation — is checked as a warning.
 
 ## The budget verb
 
-`grantkit budget` prints the compilation as tables: a summary, per-item
-costs, and per-role personnel. `--json` emits the full structured
-compilation. `--output` writes a markdown budget document: a header stating
+`grantkit budget` prints the compilation as tables: per-item costs,
+per-role personnel, and a category summary. `--json` emits the full
+structured compilation. `--output` writes a markdown budget document: a header stating
 the selection, funder, window, status, and a generated-from line naming the
 menu and the rates provider, version, and date — the reproducibility
 statement; a selected-items table with fractions, item costs, and funded
@@ -723,11 +757,15 @@ portfolio — three roles (one with a full component breakdown and benchmark,
 one base-only, one loaded-only), six items (an org-base block with overhead
 included, a unit-priced item, a recurring item, a dependency chain, a
 shipped item), and three selections (two live selections sharing an item at
-0.5 each, a draft over-planner, and an explicit-zero declaration) — and
-asserts that two runs produce identical output. Any budget table this paper
-ships regenerates from that fixture via `grantkit budget`; rendering the
-paper is itself a check. The configurator (C6) is a surface over the same
-compiled objects; @sec-case describes its one live use.
+0.5 each, and a draft over-planner carrying an explicit-zero declaration) —
+and asserts that two runs produce identical compiled output. The fixture
+ships with the package, so the compilation and gates this section describes
+reproduce end to end without private data; the reference provider's own
+computation does not, until its release (@sec-availability). The
+configurator (C6) is designed as a surface over the same compiled objects —
+presets and toggles over compiled selections — and has not shipped in v0.3;
+the scenario pressure-testing in @sec-case ran by recompiling the model,
+not through a funder-facing interface.
 
 # Case study {#sec-case}
 
@@ -736,19 +774,22 @@ ballmer-proposal-2026 PR #17 / CAMPAIGN.md before publication. -->
 
 The pipeline's first live run was an August 2026 diligence sprint at The
 Axiom Foundation, presented here with funders unnamed. The substrate was one
-rates scenario plus a menu of 24 priced work items seeded from the sprint's
-diligence corpus. Figures are from the sprint's working records.
+rates scenario plus a menu of 25 priced items — 22 work items and three
+fee-inclusive org-base blocks — seeded from the sprint's diligence corpus.
+Figures are from the sprint's working records.
 
 In one evening, a bottoms-up org model derived four coherent org shapes —
-$21.2 million to $37.8 million over five years — from the one
-rates-plus-items substrate. Each shape is a selection, so a changed rate or
-assumption regenerates all four together. The same substrate then priced a
-$2 million concept note, and the first selection came out at 134% of target
-— a 34% overshoot exposed before submission, so the trim happened in the
-org's own repository rather than in a funder's diligence. And it expressed
-a three-level funder structure as three nested views over the same menu,
-which became funder-level presets: the same items, different fractions and
-windows, consistent by construction.
+$21.2 million to $37.8 million over five years — from the sprint's shared
+role rates and receipt-grade unit costs. Each shape is a configuration of
+the same model, so a changed rate or assumption regenerates all four
+together; fee-inclusive org-cost blocks from that model became the menu's
+org-base items, which selections claim fractionally. The same substrate
+then priced a $2 million concept note, and the first selection came out at
+134% of target — a 34% overshoot exposed before submission, so the trim is
+a decision made in the org's own repository rather than in a funder's
+diligence. And it expressed a three-level funder structure as funder-level
+presets over the same menu — the bottom and top levels as selections: the
+same items, different fractions and windows, consistent by construction.
 
 The compilation also surfaced a decision the spreadsheet workflow had
 buried. One leadership pricing question — a levy versus a full-price
