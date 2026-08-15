@@ -42,7 +42,7 @@ def test_menu_must_be_mapping():
 
 
 def test_menu_requires_schema_marker(portfolio_menu):
-    portfolio_menu["schema"] = "grantkit-menu/v1"
+    portfolio_menu["schema"] = "grantkit-menu/v2"
     assert any("'schema'" in e for e in validate_menu(portfolio_menu))
     del portfolio_menu["schema"]
     assert any("'schema'" in e for e in validate_menu(portfolio_menu))

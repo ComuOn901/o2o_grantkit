@@ -33,9 +33,28 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Optional, TypeGuard
 
-MENU_SCHEMA = "grantkit-menu/v0"
-RATES_SCHEMA = "grantkit-rates/v0"
-SELECTION_SCHEMA = "grantkit-selection/v0"
+MENU_SCHEMA_V0 = "grantkit-menu/v0"
+MENU_SCHEMA_V1 = "grantkit-menu/v1"
+RATES_SCHEMA_V0 = "grantkit-rates/v0"
+RATES_SCHEMA_V1 = "grantkit-rates/v1"
+SELECTION_SCHEMA_V0 = "grantkit-selection/v0"
+SELECTION_SCHEMA_V1 = "grantkit-selection/v1"
+
+# The unqualified constants name the current schema.  The allowed sets are
+# intentionally public: model producers can advertise both the current and
+# legacy markers without duplicating GrantKit's compatibility policy.
+MENU_SCHEMA = MENU_SCHEMA_V1
+RATES_SCHEMA = RATES_SCHEMA_V1
+SELECTION_SCHEMA = SELECTION_SCHEMA_V1
+ALLOWED_MENU_SCHEMAS = frozenset({MENU_SCHEMA_V0, MENU_SCHEMA_V1})
+ALLOWED_RATES_SCHEMAS = frozenset({RATES_SCHEMA_V0, RATES_SCHEMA_V1})
+ALLOWED_SELECTION_SCHEMAS = frozenset(
+    {SELECTION_SCHEMA_V0, SELECTION_SCHEMA_V1}
+)
+# Short aliases are convenient to callers which treat these as vocabularies.
+MENU_SCHEMAS = ALLOWED_MENU_SCHEMAS
+RATES_SCHEMAS = ALLOWED_RATES_SCHEMAS
+SELECTION_SCHEMAS = ALLOWED_SELECTION_SCHEMAS
 
 #: Item lifecycle states.
 VALID_ITEM_STATUSES = {"shipped", "in-flight", "planned"}
@@ -60,6 +79,26 @@ RECOMMENDED_ITEM_TYPES = (
 )
 
 _ITEM_ID_RE = re.compile(r"^[a-z0-9-]+$")
+
+
+class ValidationIssue(str):
+    """A string-compatible schema error carrying its gate rule.
+
+    ``validate_*`` historically returned ``list[str]``.  Subclassing ``str``
+    preserves that API (including exact equality in downstream tests) while
+    allowing the gate layer to route v1 errors to their specific rule ids.
+    """
+
+    rule: str
+
+    def __new__(cls, rule: str, message: str) -> "ValidationIssue":
+        value = super().__new__(cls, message)
+        value.rule = rule
+        return value
+
+
+def _add_error(errors: list[str], rule: str, message: str) -> None:
+    errors.append(ValidationIssue(rule, message))
 
 
 def _is_int_or_none(value: Any) -> bool:
@@ -115,12 +154,88 @@ def _is_string_list(value: Any, *, nonempty: bool = False) -> bool:
     )
 
 
+_ESTIMATE_KEYS = {"central", "low", "high", "basis", "source"}
+
+
+def _estimate_validation_errors(value: Any) -> list[str]:
+    """Return validation errors for one estimate object."""
+    if not isinstance(value, dict):
+        return ["estimate must be a mapping"]
+    errors: list[str] = []
+    unknown = [key for key in value if key not in _ESTIMATE_KEYS]
+    if unknown:
+        errors.append(
+            f"estimate has unknown keys: {sorted(map(str, unknown))}"
+        )
+    central = value.get("central")
+    if not _is_number(central) or central < 0:
+        errors.append("estimate.central must be a finite non-negative number")
+    low = value.get("low")
+    if "low" in value and (not _is_number(low) or low < 0):
+        errors.append("estimate.low must be a finite non-negative number")
+    high = value.get("high")
+    if "high" in value and (not _is_number(high) or high < 0):
+        errors.append("estimate.high must be a finite non-negative number")
+    if _is_number(central):
+        if _is_number(low) and low > central:
+            errors.append("estimate.low must be <= estimate.central")
+        if _is_number(high) and central > high:
+            errors.append("estimate.central must be <= estimate.high")
+    basis = value.get("basis")
+    if basis is not None and (
+        not _is_string(basis) or basis not in VALID_COMPONENT_BASES
+    ):
+        errors.append(
+            "estimate.basis must be one of "
+            f"{sorted(VALID_COMPONENT_BASES)} or null"
+        )
+    if not _is_optional_string(value.get("source")):
+        errors.append("estimate.source must be a string or null")
+    return errors
+
+
+def _is_estimate(value: Any) -> bool:
+    return isinstance(value, dict) and "central" in value
+
+
+def as_number(value: Any) -> float:
+    """Resolve a plain number or estimate object to a finite float.
+
+    Estimate objects are validated in full, rather than merely reading their
+    ``central`` key.  This makes the helper safe as a public trust boundary.
+    Booleans are never numbers in the budget schema.
+    """
+    if _is_number(value):
+        return float(value)
+    if isinstance(value, dict):
+        errors = _estimate_validation_errors(value)
+        if not errors:
+            return float(value["central"])
+        raise ValueError("; ".join(errors))
+    raise ValueError("value must be a finite number or estimate object")
+
+
+def _is_cost_number(value: Any) -> bool:
+    try:
+        return as_number(value) >= 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _as_float(value: Any, default: float = 0.0) -> float:
-    return float(value) if _is_number(value) else default
+    try:
+        return as_number(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 
 def _as_optional_float(value: Any) -> Optional[float]:
-    return float(value) if _is_number(value) else None
+    if value is None:
+        return None
+    try:
+        return as_number(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _string_list(value: Any) -> list[str]:
@@ -129,12 +244,19 @@ def _string_list(value: Any) -> list[str]:
     return [str(entry) for entry in value if isinstance(entry, str)]
 
 
-def _number_map(value: Any) -> dict[str, float]:
+def _number_map(value: Any, *, estimates: bool = True) -> dict[str, float]:
     if not isinstance(value, dict):
         return {}
-    return {
-        str(key): float(val) for key, val in value.items() if _is_number(val)
-    }
+    result: dict[str, float] = {}
+    for key, val in value.items():
+        if estimates:
+            try:
+                result[str(key)] = as_number(val)
+            except (TypeError, ValueError, OverflowError):
+                continue
+        elif _is_number(val):
+            result[str(key)] = float(val)
+    return result
 
 
 # -- menu.yaml ----------------------------------------------------------
@@ -147,6 +269,7 @@ class UnitCost:
     usd_per_unit: float
     derivation: Optional[str] = None
     provenance: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -155,6 +278,15 @@ class Overheads:
 
     fiscal_sponsorship_rate: float = 0.0
     provenance: Optional[str] = None
+
+
+@dataclass
+class RosterLine:
+    """One role in an org-base roster."""
+
+    role: str
+    fte: float
+    months: Optional[float] = None
 
 
 @dataclass
@@ -172,6 +304,63 @@ class Resourcing:
     recurring_usd_per_year: Optional[float] = None
     amount_usd: Optional[float] = None
     overhead_included: bool = False
+    roster: list[RosterLine] = field(default_factory=list)
+    non_personnel_usd_per_year: Optional[float] = None
+
+
+@dataclass
+class RevenueStream:
+    """One explicit or parametric revenue stream.
+
+    ``price_usd`` and entries in ``volume_per_year`` are concrete floats on
+    explicit items and raw FORM values on kinds.  ``raw`` always retains the
+    source representation for resolution and estimate collection.
+    """
+
+    stream: str
+    family: str = ""
+    unit: str = ""
+    price_usd: Any = 0.0
+    volume_per_year: list[Any] = field(default_factory=list)
+    starts: str = "completion"
+    ramp_months: Optional[float] = None
+    provenance: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Kind:
+    """A parametric menu-item template."""
+
+    id: str
+    title: str = ""
+    doc: str = ""
+    type: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+    derived: dict[str, Any] = field(default_factory=dict)
+    # Parametric resourcing is intentionally raw: its leaves are FORMs, not
+    # the concrete floats represented by ``Resourcing``.
+    resourcing: dict[str, Any] = field(default_factory=dict)
+    duration_months: Any = None
+    dependencies: Any = field(default_factory=list)
+    revenue: list[RevenueStream] = field(default_factory=list)
+    title_template: Optional[str] = None
+    what: str = ""
+    evidence: str = ""
+    status: str = "planned"
+    revenue_unlock: Optional[str] = None
+    provenance: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class KindPreset:
+    """A named partial parameter bundle for a kind."""
+
+    kind: str
+    title: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -189,6 +378,114 @@ class MenuItem:
     dependencies: list[str] = field(default_factory=list)
     revenue_unlock: Optional[str] = None
     provenance: list[str] = field(default_factory=list)
+    kind: Optional[str] = None
+    params: dict[str, Any] = field(default_factory=dict)
+    revenue: list[RevenueStream] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+def _parse_roster(value: Any) -> list[RosterLine]:
+    if not isinstance(value, list):
+        return []
+    result: list[RosterLine] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        fte = entry.get("fte")
+        if not _is_number(fte):
+            continue
+        months = entry.get("months")
+        result.append(
+            RosterLine(
+                role=str(entry.get("role", "")),
+                fte=float(fte),
+                months=float(months) if _is_number(months) else None,
+            )
+        )
+    return result
+
+
+def _parse_resourcing(value: Any) -> Resourcing:
+    data = value if isinstance(value, dict) else {}
+    return Resourcing(
+        fte_months=_number_map(data.get("fte_months")),
+        units=_number_map(data.get("units"), estimates=False),
+        contract_usd=_as_optional_float(data.get("contract_usd")),
+        recurring_usd_per_year=_as_optional_float(
+            data.get("recurring_usd_per_year")
+        ),
+        amount_usd=_as_optional_float(data.get("amount_usd")),
+        overhead_included=bool(data.get("overhead_included", False)),
+        roster=_parse_roster(data.get("roster")),
+        non_personnel_usd_per_year=_as_optional_float(
+            data.get("non_personnel_usd_per_year")
+        ),
+    )
+
+
+def _parse_revenue(value: Any, *, parametric: bool) -> list[RevenueStream]:
+    if not isinstance(value, list):
+        return []
+    result: list[RevenueStream] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        raw_volume = entry.get("volume_per_year")
+        volume = list(raw_volume) if isinstance(raw_volume, list) else []
+        if not parametric:
+            concrete: list[float] = []
+            for amount in volume:
+                try:
+                    concrete.append(as_number(amount))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+            volume = concrete
+        raw_price = entry.get("price_usd", 0.0)
+        price: Any = raw_price
+        if not parametric:
+            price = _as_float(raw_price)
+        ramp = entry.get("ramp_months")
+        result.append(
+            RevenueStream(
+                stream=str(entry.get("stream", "")),
+                family=str(entry.get("family", "")),
+                unit=str(entry.get("unit", "")),
+                price_usd=price,
+                volume_per_year=volume,
+                starts=str(entry.get("starts", "completion")),
+                ramp_months=float(ramp) if _is_number(ramp) else None,
+                provenance=_string_list(entry.get("provenance")),
+                raw=entry,
+            )
+        )
+    return result
+
+
+def _parse_kind(kind_id: Any, value: Any) -> Optional[Kind]:
+    if not isinstance(value, dict):
+        return None
+    params = value.get("params")
+    derived = value.get("derived")
+    resourcing = value.get("resourcing")
+    return Kind(
+        id=str(kind_id),
+        title=str(value.get("title", "")),
+        doc=str(value.get("doc", "")),
+        type=str(value.get("type", kind_id)),
+        params=dict(params) if isinstance(params, dict) else {},
+        derived=dict(derived) if isinstance(derived, dict) else {},
+        resourcing=(dict(resourcing) if isinstance(resourcing, dict) else {}),
+        duration_months=value.get("duration_months"),
+        dependencies=value.get("dependencies", []),
+        revenue=_parse_revenue(value.get("revenue"), parametric=True),
+        title_template=value.get("title_template"),
+        what=str(value.get("what", "")),
+        evidence=str(value.get("evidence", "")),
+        status=str(value.get("status", "planned")),
+        revenue_unlock=value.get("revenue_unlock"),
+        provenance=_string_list(value.get("provenance")),
+        raw=value,
+    )
 
 
 @dataclass
@@ -200,6 +497,8 @@ class Menu:
     overheads: Overheads = field(default_factory=Overheads)
     unit_costs: dict[str, UnitCost] = field(default_factory=dict)
     items: list[MenuItem] = field(default_factory=list)
+    kinds: dict[str, Kind] = field(default_factory=dict)
+    kind_presets: dict[str, KindPreset] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -230,31 +529,35 @@ class Menu:
                     usd_per_unit=_as_float(entry.get("usd_per_unit")),
                     derivation=entry.get("derivation"),
                     provenance=_string_list(entry.get("provenance")),
+                    raw=entry,
+                )
+        kinds: dict[str, Kind] = {}
+        raw_kinds = data.get("kinds")
+        if isinstance(raw_kinds, dict):
+            for kind_id, entry in raw_kinds.items():
+                parsed = _parse_kind(kind_id, entry)
+                if parsed is not None:
+                    kinds[str(kind_id)] = parsed
+        kind_presets: dict[str, KindPreset] = {}
+        raw_presets = data.get("kind_presets")
+        if isinstance(raw_presets, dict):
+            for name, entry in raw_presets.items():
+                if not isinstance(entry, dict):
+                    continue
+                params = entry.get("params")
+                kind_presets[str(name)] = KindPreset(
+                    kind=str(entry.get("kind", "")),
+                    title=str(entry.get("title", "")),
+                    params=dict(params) if isinstance(params, dict) else {},
+                    raw=entry,
                 )
         items: list[MenuItem] = []
         raw_items = data.get("items")
         for entry in raw_items if isinstance(raw_items, list) else []:
             if not isinstance(entry, dict):
                 continue
-            resourcing_data = entry.get("resourcing")
-            if not isinstance(resourcing_data, dict):
-                resourcing_data = {}
-            resourcing = Resourcing(
-                fte_months=_number_map(resourcing_data.get("fte_months")),
-                units=_number_map(resourcing_data.get("units")),
-                contract_usd=_as_optional_float(
-                    resourcing_data.get("contract_usd")
-                ),
-                recurring_usd_per_year=_as_optional_float(
-                    resourcing_data.get("recurring_usd_per_year")
-                ),
-                amount_usd=_as_optional_float(
-                    resourcing_data.get("amount_usd")
-                ),
-                overhead_included=bool(
-                    resourcing_data.get("overhead_included", False)
-                ),
-            )
+            resourcing = _parse_resourcing(entry.get("resourcing"))
+            params = entry.get("params")
             items.append(
                 MenuItem(
                     id=str(entry.get("id", "")),
@@ -272,6 +575,16 @@ class Menu:
                     dependencies=_string_list(entry.get("dependencies")),
                     revenue_unlock=entry.get("revenue_unlock"),
                     provenance=_string_list(entry.get("provenance")),
+                    kind=(
+                        str(entry.get("kind"))
+                        if entry.get("kind") is not None
+                        else None
+                    ),
+                    params=dict(params) if isinstance(params, dict) else {},
+                    revenue=_parse_revenue(
+                        entry.get("revenue"), parametric=False
+                    ),
+                    raw=entry,
                 )
             )
         return cls(
@@ -280,6 +593,8 @@ class Menu:
             overheads=overheads,
             unit_costs=unit_costs,
             items=items,
+            kinds=kinds,
+            kind_presets=kind_presets,
             raw=data,
         )
 
@@ -317,6 +632,9 @@ class RoleRate:
     components: list[RateComponent] = field(default_factory=list)
     benchmark: Optional[RateBenchmark] = None
     provenance: list[str] = field(default_factory=list)
+    capacity_fte: Optional[float] = None
+    loaded_usd_estimate: Optional[dict[str, Any]] = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -382,6 +700,17 @@ class Rates:
                     components=components,
                     benchmark=benchmark,
                     provenance=_string_list(entry.get("provenance")),
+                    capacity_fte=(
+                        float(entry["capacity_fte"])
+                        if _is_number(entry.get("capacity_fte"))
+                        else None
+                    ),
+                    loaded_usd_estimate=(
+                        dict(entry["loaded_usd"])
+                        if _is_estimate(entry.get("loaded_usd"))
+                        else None
+                    ),
+                    raw=entry,
                 )
             )
         return cls(
@@ -401,12 +730,57 @@ class Rates:
 
 
 @dataclass
+class InlineInstance:
+    """A selection-private instance of a parametric kind."""
+
+    id: str
+    kind: str
+    params: dict[str, Any] = field(default_factory=dict)
+    title: Optional[str] = None
+    type: Optional[str] = None
+    resourcing: Optional[Resourcing] = None
+    duration_months: Optional[int] = None
+    dependencies: list[str] = field(default_factory=list)
+    revenue: list[RevenueStream] = field(default_factory=list)
+    provenance: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+def _parse_inline_instance(value: Any) -> Optional[InlineInstance]:
+    if not isinstance(value, dict):
+        return None
+    params = value.get("params")
+    raw_resourcing = value.get("resourcing")
+    duration = value.get("duration_months")
+    return InlineInstance(
+        id=str(value.get("id", "")),
+        kind=str(value.get("kind", "")),
+        params=dict(params) if isinstance(params, dict) else {},
+        title=value.get("title"),
+        type=value.get("type"),
+        resourcing=(
+            _parse_resourcing(raw_resourcing)
+            if isinstance(raw_resourcing, dict)
+            else None
+        ),
+        duration_months=(duration if _is_int_or_none(duration) else None),
+        dependencies=_string_list(value.get("dependencies")),
+        revenue=_parse_revenue(value.get("revenue"), parametric=False),
+        provenance=_string_list(value.get("provenance")),
+        raw=value,
+    )
+
+
+@dataclass
 class SelectionLine:
     """One selected menu item with its funding fraction."""
 
-    item: str
-    fraction: float
+    item: str = ""
+    fraction: float = 0.0
     note: Optional[str] = None
+    instance: Optional[InlineInstance] = None
+    start_month: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -430,6 +804,7 @@ class Selection:
     org_base: Optional[OrgBase] = None
     selections: list[SelectionLine] = field(default_factory=list)
     notes: Optional[str] = None
+    horizon_months: int = 0
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -451,23 +826,38 @@ class Selection:
                     item=str(entry.get("item", "")),
                     fraction=_as_float(entry.get("fraction")),
                     note=entry.get("note"),
+                    instance=_parse_inline_instance(entry.get("instance")),
+                    start_month=(
+                        entry.get("start_month", 0)
+                        if isinstance(entry.get("start_month", 0), int)
+                        and not isinstance(entry.get("start_month", 0), bool)
+                        else 0
+                    ),
+                    raw=entry,
                 )
             )
         window = data.get("window_months")
+        parsed_window = (
+            window
+            if isinstance(window, int) and not isinstance(window, bool)
+            else 0
+        )
+        horizon = data.get("horizon_months", parsed_window)
         return cls(
             schema=str(data.get("schema", SELECTION_SCHEMA)),
             id=str(data.get("id", "")),
             funder=str(data.get("funder", "")),
             status=str(data.get("status", "")),
             target_usd=_as_optional_float(data.get("target_usd")),
-            window_months=(
-                window
-                if isinstance(window, int) and not isinstance(window, bool)
-                else 0
-            ),
+            window_months=parsed_window,
             org_base=org_base,
             selections=lines,
             notes=data.get("notes"),
+            horizon_months=(
+                horizon
+                if isinstance(horizon, int) and not isinstance(horizon, bool)
+                else parsed_window
+            ),
             raw=data,
         )
 
@@ -476,11 +866,51 @@ class Selection:
 
 
 def _validate_schema_key(
-    data: dict[str, Any], expected: str, errors: list[str]
+    data: dict[str, Any], allowed: frozenset[str], errors: list[str], rule: str
 ) -> None:
     declared = data.get("schema")
-    if declared != expected:
-        errors.append(f"'schema' must be '{expected}' (got {declared!r})")
+    if declared not in allowed:
+        _add_error(
+            errors,
+            rule,
+            f"'schema' must be one of {sorted(allowed)} (got {declared!r})",
+        )
+
+
+def _validate_cost_scalar(
+    value: Any,
+    where: str,
+    errors: list[str],
+    *,
+    regular_rule: str,
+    positive: bool = False,
+) -> bool:
+    """Validate one concrete cost scalar and assign estimate errors."""
+    if isinstance(value, dict):
+        estimate_errors = _estimate_validation_errors(value)
+        for message in estimate_errors:
+            _add_error(errors, "estimate_invalid", f"{where}: {message}")
+        if estimate_errors:
+            return False
+        number = float(value["central"])
+    elif _is_number(value):
+        number = float(value)
+    else:
+        _add_error(
+            errors,
+            regular_rule,
+            f"{where} must be a finite non-negative number or estimate",
+        )
+        return False
+    if number < 0 or (positive and number <= 0):
+        adjective = "positive" if positive else "non-negative"
+        _add_error(
+            errors,
+            regular_rule,
+            f"{where} must be a {adjective} number or estimate",
+        )
+        return False
+    return True
 
 
 def _validate_resourcing(
@@ -499,11 +929,12 @@ def _validate_resourcing(
                     errors.append(
                         f"{where} 'fte_months' keys must be non-empty strings"
                     )
-                if not _is_number(months) or months < 0:
-                    errors.append(
-                        f"{where} fte_months['{role}'] must be a "
-                        f"non-negative number"
-                    )
+                _validate_cost_scalar(
+                    months,
+                    f"{where} fte_months['{role}']",
+                    errors,
+                    regular_rule="menu_invalid",
+                )
     units = resourcing.get("units")
     if units is not None:
         if not isinstance(units, dict):
@@ -521,10 +952,46 @@ def _validate_resourcing(
                     )
     for key in ("contract_usd", "recurring_usd_per_year", "amount_usd"):
         value = resourcing.get(key)
-        if value is not None and (not _is_number(value) or value < 0):
-            errors.append(
-                f"{where} '{key}' must be a non-negative number or null"
+        if value is not None:
+            _validate_cost_scalar(
+                value,
+                f"{where} '{key}'",
+                errors,
+                regular_rule="menu_invalid",
             )
+    non_personnel = resourcing.get("non_personnel_usd_per_year")
+    if non_personnel is not None:
+        _validate_cost_scalar(
+            non_personnel,
+            f"{where} 'non_personnel_usd_per_year'",
+            errors,
+            regular_rule="menu_invalid",
+        )
+    roster = resourcing.get("roster")
+    if roster is not None:
+        if not isinstance(roster, list):
+            errors.append(f"{where} 'roster' must be a list")
+        else:
+            for index, line in enumerate(roster):
+                rwhere = f"{where} roster[{index}]"
+                if not isinstance(line, dict):
+                    errors.append(f"{rwhere} must be a mapping")
+                    continue
+                if not _is_string(line.get("role"), nonempty=True):
+                    errors.append(f"{rwhere} missing 'role'")
+                fte = line.get("fte")
+                if not _is_number(fte) or fte < 0:
+                    errors.append(
+                        f"{rwhere} 'fte' must be a non-negative number"
+                    )
+                months = line.get("months")
+                if months is not None and (
+                    not _is_number(months) or months < 0
+                ):
+                    errors.append(
+                        f"{rwhere} 'months' must be a non-negative "
+                        "number or null"
+                    )
     if "overhead_included" in resourcing and not isinstance(
         resourcing["overhead_included"], bool
     ):
@@ -535,12 +1002,777 @@ def _validate_resourcing(
         or resourcing.get("contract_usd") is not None
         or resourcing.get("recurring_usd_per_year") is not None
         or resourcing.get("amount_usd") is not None
+        or (isinstance(roster, list) and roster)
+        or resourcing.get("non_personnel_usd_per_year") is not None
     )
     if not costed:
         errors.append(
             f"{where} resourcing must contain at least one costed field "
             f"(fte_months, units, contract_usd, recurring_usd_per_year, "
-            f"or amount_usd)"
+            f"amount_usd, roster, or non_personnel_usd_per_year)"
+        )
+
+
+_PARAM_TYPES = {"number", "integer", "enum", "boolean", "string"}
+_FORM_KEYS = {"const", "per", "by", "when"}
+
+
+def _same_literal(left: Any, right: Any) -> bool:
+    """Compare enum/boolean literals without Python's bool == int quirk."""
+    return type(left) is type(right) and left == right
+
+
+def _literal_in(value: Any, choices: list[Any]) -> bool:
+    return any(_same_literal(value, choice) for choice in choices)
+
+
+def _param_value_valid(value: Any, definition: dict[str, Any]) -> bool:
+    param_type = definition.get("type")
+    if param_type == "number":
+        valid = _is_number(value)
+    elif param_type == "integer":
+        valid = isinstance(value, int) and not isinstance(value, bool)
+    elif param_type == "boolean":
+        valid = isinstance(value, bool)
+    elif param_type == "string":
+        valid = _is_string(value)
+    elif param_type == "enum":
+        choices = definition.get("values")
+        valid = isinstance(choices, list) and _literal_in(value, choices)
+    else:
+        return False
+    if not valid:
+        return False
+    if param_type in {"number", "integer"}:
+        minimum = definition.get("min")
+        maximum = definition.get("max")
+        if _is_number(minimum) and value < minimum:
+            return False
+        if _is_number(maximum) and value > maximum:
+            return False
+    return True
+
+
+def _validate_param_definitions(
+    value: Any, where: str, errors: list[str]
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "kind_param_invalid",
+            f"{where} 'params' must be a mapping",
+        )
+        return {}
+    definitions: dict[str, dict[str, Any]] = {}
+    for name, definition in value.items():
+        pwhere = f"{where} params['{name}']"
+        if not _is_string(name, nonempty=True):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{where} param names must be non-empty strings",
+            )
+            continue
+        if not isinstance(definition, dict):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{pwhere} must be a mapping",
+            )
+            continue
+        definitions[name] = definition
+        param_type = definition.get("type")
+        if param_type not in _PARAM_TYPES:
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{pwhere} invalid type {param_type!r}",
+            )
+        if param_type == "enum":
+            choices = definition.get("values")
+            if not isinstance(choices, list) or not choices:
+                _add_error(
+                    errors,
+                    "kind_param_invalid",
+                    f"{pwhere} enum 'values' must be a non-empty list",
+                )
+            elif any(
+                _same_literal(a, b)
+                for index, a in enumerate(choices)
+                for b in choices[index + 1 :]
+            ):
+                _add_error(
+                    errors,
+                    "kind_param_invalid",
+                    f"{pwhere} enum values must be unique",
+                )
+        for bound in ("min", "max"):
+            bound_value = definition.get(bound)
+            if bound_value is not None and (
+                param_type not in {"number", "integer"}
+                or not _is_number(bound_value)
+            ):
+                _add_error(
+                    errors,
+                    "kind_param_invalid",
+                    f"{pwhere} '{bound}' is only valid as a finite number "
+                    "on number/integer params",
+                )
+        minimum = definition.get("min")
+        maximum = definition.get("max")
+        if _is_number(minimum) and _is_number(maximum) and minimum > maximum:
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{pwhere} min must be <= max",
+            )
+        if "default" not in definition:
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{pwhere} missing required 'default'",
+            )
+        elif not _param_value_valid(definition["default"], definition):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{pwhere} default is invalid or outside its bounds",
+            )
+        for text_key in ("unit", "doc"):
+            if not _is_optional_string(definition.get(text_key)):
+                _add_error(
+                    errors,
+                    "kind_param_invalid",
+                    f"{pwhere} '{text_key}' must be a string or null",
+                )
+    return definitions
+
+
+def _validate_param_values(
+    value: Any,
+    definitions: dict[str, dict[str, Any]],
+    where: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "kind_param_invalid",
+            f"{where} 'params' must be a mapping",
+        )
+        return
+    for name, param_value in value.items():
+        if name not in definitions:
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{where} undeclared param {name!r}",
+            )
+        elif not _param_value_valid(param_value, definitions[name]):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{where} param {name!r} has an invalid type or is "
+                "outside its bounds",
+            )
+
+
+def _validate_derived(
+    value: Any,
+    definitions: dict[str, dict[str, Any]],
+    where: str,
+    errors: list[str],
+) -> set[str]:
+    numeric = {
+        name
+        for name, definition in definitions.items()
+        if definition.get("type") in {"number", "integer"}
+    }
+    if value is None:
+        return numeric
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "derived_invalid",
+            f"{where} 'derived' must be a mapping",
+        )
+        return numeric
+    for name, expression in value.items():
+        dwhere = f"{where} derived['{name}']"
+        valid_name = _is_string(name, nonempty=True)
+        if not valid_name or name in definitions:
+            _add_error(
+                errors,
+                "derived_invalid",
+                f"{dwhere} must have a non-empty name that does not "
+                "shadow a param",
+            )
+            continue
+        if not isinstance(expression, dict):
+            _add_error(
+                errors,
+                "derived_invalid",
+                f"{dwhere} must be a mapping",
+            )
+            continue
+        operations = [key for key in ("product", "sum") if key in expression]
+        if len(operations) != 1 or len(expression) != 1:
+            _add_error(
+                errors,
+                "derived_invalid",
+                f"{dwhere} must contain exactly one of 'product' or 'sum'",
+            )
+            continue
+        operands = expression[operations[0]]
+        if not isinstance(operands, list) or not operands:
+            _add_error(
+                errors,
+                "derived_invalid",
+                f"{dwhere} operands must be a non-empty list",
+            )
+            continue
+        valid = True
+        for operand in operands:
+            if _is_number(operand):
+                continue
+            if not isinstance(operand, str) or operand not in numeric:
+                _add_error(
+                    errors,
+                    "derived_invalid",
+                    f"{dwhere} references unknown, non-numeric, or "
+                    f"not-yet-declared operand {operand!r}",
+                )
+                valid = False
+        if valid:
+            numeric.add(name)
+    return numeric
+
+
+def _validate_form(
+    value: Any,
+    definitions: dict[str, dict[str, Any]],
+    numeric_refs: set[str],
+    where: str,
+    errors: list[str],
+    *,
+    allow_list: bool = True,
+) -> None:
+    if isinstance(value, list):
+        if not allow_list or not value:
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} must be a FORM or a non-empty list of FORMs",
+            )
+            return
+        for index, form in enumerate(value):
+            _validate_form(
+                form,
+                definitions,
+                numeric_refs,
+                f"{where}[{index}]",
+                errors,
+                allow_list=False,
+            )
+        return
+    if _is_number(value):
+        if value < 0:
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} must be non-negative",
+            )
+        return
+    if isinstance(value, dict) and set(value) & _ESTIMATE_KEYS:
+        _validate_cost_scalar(
+            value,
+            where,
+            errors,
+            regular_rule="kind_form_invalid",
+        )
+        return
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} must be a number, estimate, FORM, or list of FORMs",
+        )
+        return
+    unknown = set(value) - _FORM_KEYS
+    if unknown or not any(key in value for key in ("const", "per", "by")):
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} has invalid FORM keys or no value-producing term",
+        )
+    if "const" in value:
+        _validate_cost_scalar(
+            value["const"],
+            f"{where}.const",
+            errors,
+            regular_rule="kind_form_invalid",
+        )
+    per = value.get("per")
+    if per is not None:
+        if not isinstance(per, dict):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where}.per must be a mapping",
+            )
+        else:
+            for param, coefficient in per.items():
+                if param not in numeric_refs:
+                    _add_error(
+                        errors,
+                        "kind_form_invalid",
+                        f"{where}.per references unknown or non-numeric "
+                        f"param {param!r}",
+                    )
+                _validate_cost_scalar(
+                    coefficient,
+                    f"{where}.per['{param}']",
+                    errors,
+                    regular_rule="kind_form_invalid",
+                )
+    for selector_key in ("by", "when"):
+        selectors = value.get(selector_key)
+        if selectors is None:
+            continue
+        if not isinstance(selectors, dict) or not selectors:
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where}.{selector_key} must be a non-empty mapping",
+            )
+            continue
+        for param, choices in selectors.items():
+            definition = definitions.get(param, {})
+            param_type = definition.get("type")
+            allowed = (
+                definition.get("values", [])
+                if param_type == "enum"
+                else [False, True]
+            )
+            if param_type not in {"enum", "boolean"}:
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where}.{selector_key} references non-enum param "
+                    f"{param!r}",
+                )
+            if selector_key == "when":
+                if not isinstance(choices, list) or not choices:
+                    _add_error(
+                        errors,
+                        "kind_form_invalid",
+                        f"{where}.when['{param}'] must be a non-empty list",
+                    )
+                elif any(
+                    not _literal_in(choice, allowed) for choice in choices
+                ):
+                    _add_error(
+                        errors,
+                        "kind_form_invalid",
+                        f"{where}.when['{param}'] contains an invalid value",
+                    )
+            elif not isinstance(choices, dict):
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where}.by['{param}'] must be a mapping",
+                )
+            else:
+                for choice, coefficient in choices.items():
+                    if not _literal_in(choice, allowed):
+                        _add_error(
+                            errors,
+                            "kind_form_invalid",
+                            f"{where}.by['{param}'] has invalid value "
+                            f"{choice!r}",
+                        )
+                    _validate_cost_scalar(
+                        coefficient,
+                        f"{where}.by['{param}'][{choice!r}]",
+                        errors,
+                        regular_rule="kind_form_invalid",
+                    )
+
+
+def _validate_dependencies(
+    value: Any,
+    definitions: dict[str, dict[str, Any]],
+    where: str,
+    errors: list[str],
+) -> None:
+    if isinstance(value, list):
+        if not _is_string_list(value):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} dependencies must contain non-empty strings",
+            )
+        return
+    if not isinstance(value, dict) or set(value) != {"by"}:
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} dependencies must be a list or a 'by' selector",
+        )
+        return
+    selectors = value.get("by")
+    if not isinstance(selectors, dict) or not selectors:
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} dependencies.by must be a non-empty mapping",
+        )
+        return
+    for param, branches in selectors.items():
+        definition = definitions.get(param, {})
+        param_type = definition.get("type")
+        allowed = (
+            definition.get("values", [])
+            if param_type == "enum"
+            else [False, True]
+        )
+        if param_type not in {"enum", "boolean"}:
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} dependencies.by references non-enum param "
+                f"{param!r}",
+            )
+        if not isinstance(branches, dict):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} dependencies.by['{param}'] must be a mapping",
+            )
+            continue
+        for choice, dependencies in branches.items():
+            if not _literal_in(choice, allowed):
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where} dependencies.by['{param}'] has invalid "
+                    f"value {choice!r}",
+                )
+            if not _is_string_list(dependencies):
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where} dependency branch values must be lists of "
+                    "non-empty strings",
+                )
+
+
+def _validate_revenue(
+    value: Any,
+    where: str,
+    errors: list[str],
+    *,
+    parametric: bool,
+    definitions: Optional[dict[str, dict[str, Any]]] = None,
+    numeric_refs: Optional[set[str]] = None,
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        _add_error(
+            errors, "revenue_invalid", f"{where} revenue must be a list"
+        )
+        return
+    definitions = definitions or {}
+    numeric_refs = numeric_refs or set()
+    for index, stream in enumerate(value):
+        rwhere = f"{where} revenue[{index}]"
+        if not isinstance(stream, dict):
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere} must be a mapping",
+            )
+            continue
+        for key in ("stream", "family", "unit"):
+            if not _is_string(stream.get(key), nonempty=True):
+                _add_error(
+                    errors,
+                    "revenue_invalid",
+                    f"{rwhere} missing '{key}'",
+                )
+        if "price_usd" not in stream:
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere} missing 'price_usd'",
+            )
+        elif parametric:
+            _validate_form(
+                stream["price_usd"],
+                definitions,
+                numeric_refs,
+                f"{rwhere}.price_usd",
+                errors,
+            )
+        else:
+            _validate_cost_scalar(
+                stream["price_usd"],
+                f"{rwhere}.price_usd",
+                errors,
+                regular_rule="revenue_invalid",
+            )
+        volume = stream.get("volume_per_year")
+        if not isinstance(volume, list) or not volume:
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere}.volume_per_year must be a non-empty list",
+            )
+        else:
+            for year, amount in enumerate(volume):
+                if parametric:
+                    _validate_form(
+                        amount,
+                        definitions,
+                        numeric_refs,
+                        f"{rwhere}.volume_per_year[{year}]",
+                        errors,
+                    )
+                else:
+                    _validate_cost_scalar(
+                        amount,
+                        f"{rwhere}.volume_per_year[{year}]",
+                        errors,
+                        regular_rule="revenue_invalid",
+                    )
+        starts = stream.get("starts", "completion")
+        if starts not in {"completion", "start"}:
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere}.starts must be 'completion' or 'start'",
+            )
+        ramp = stream.get("ramp_months")
+        if ramp is not None and (not _is_number(ramp) or ramp < 0):
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere}.ramp_months must be a non-negative number or null",
+            )
+        provenance = stream.get("provenance")
+        if provenance is not None and not _is_string_list(provenance):
+            _add_error(
+                errors,
+                "revenue_invalid",
+                f"{rwhere}.provenance must be a list of non-empty strings",
+            )
+
+
+def _validate_kind_resourcing(
+    value: Any,
+    definitions: dict[str, dict[str, Any]],
+    numeric_refs: set[str],
+    where: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} missing 'resourcing' mapping",
+        )
+        return
+    costed = False
+    for map_key in ("fte_months", "units"):
+        entries = value.get(map_key)
+        if entries is None:
+            continue
+        if not isinstance(entries, dict):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} resourcing.{map_key} must be a mapping",
+            )
+            continue
+        costed = costed or bool(entries)
+        for name, form in entries.items():
+            if not _is_string(name, nonempty=True):
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where} resourcing.{map_key} keys must be strings",
+                )
+            _validate_form(
+                form,
+                definitions,
+                numeric_refs,
+                f"{where} resourcing.{map_key}['{name}']",
+                errors,
+            )
+    for key in (
+        "contract_usd",
+        "recurring_usd_per_year",
+        "amount_usd",
+        "non_personnel_usd_per_year",
+    ):
+        if key in value and value[key] is not None:
+            costed = True
+            _validate_form(
+                value[key],
+                definitions,
+                numeric_refs,
+                f"{where} resourcing.{key}",
+                errors,
+            )
+    if "overhead_included" in value and not isinstance(
+        value["overhead_included"], bool
+    ):
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} resourcing.overhead_included must be a boolean",
+        )
+    roster = value.get("roster")
+    if roster is not None:
+        costed = True
+        # Roster fte/months are decisions, not FORMs or estimates.
+        _validate_resourcing({"roster": roster}, where, errors)
+    if not costed:
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} resourcing must contain a costed field",
+        )
+
+
+def _validate_kinds(
+    data: dict[str, Any], errors: list[str]
+) -> dict[str, tuple[dict[str, dict[str, Any]], set[str]]]:
+    raw_kinds = data.get("kinds")
+    if raw_kinds is None:
+        return {}
+    if not isinstance(raw_kinds, dict):
+        _add_error(errors, "kind_form_invalid", "'kinds' must be a mapping")
+        return {}
+    result: dict[str, tuple[dict[str, dict[str, Any]], set[str]]] = {}
+    for kind_id, kind in raw_kinds.items():
+        where = f"kinds['{kind_id}']"
+        if not _is_string(kind_id, nonempty=True) or not _ITEM_ID_RE.match(
+            kind_id
+        ):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} id must match [a-z0-9-]+",
+            )
+        if not isinstance(kind, dict):
+            _add_error(
+                errors, "kind_form_invalid", f"{where} must be a mapping"
+            )
+            continue
+        for key in ("title", "doc", "type", "what", "evidence"):
+            if key in kind and not _is_string(kind[key], nonempty=True):
+                _add_error(
+                    errors,
+                    "kind_form_invalid",
+                    f"{where} '{key}' must be a non-empty string",
+                )
+        definitions = _validate_param_definitions(
+            kind.get("params"), where, errors
+        )
+        numeric_refs = _validate_derived(
+            kind.get("derived"), definitions, where, errors
+        )
+        _validate_kind_resourcing(
+            kind.get("resourcing"),
+            definitions,
+            numeric_refs,
+            where,
+            errors,
+        )
+        if kind.get("duration_months") is not None:
+            _validate_form(
+                kind["duration_months"],
+                definitions,
+                numeric_refs,
+                f"{where} duration_months",
+                errors,
+            )
+        _validate_dependencies(
+            kind.get("dependencies", []), definitions, where, errors
+        )
+        _validate_revenue(
+            kind.get("revenue"),
+            where,
+            errors,
+            parametric=True,
+            definitions=definitions,
+            numeric_refs=numeric_refs,
+        )
+        if not _is_optional_string(kind.get("title_template")):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} title_template must be a string or null",
+            )
+        status = kind.get("status", "planned")
+        if status not in VALID_ITEM_STATUSES:
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} invalid status {status!r}",
+            )
+        provenance = kind.get("provenance")
+        if provenance is not None and not _is_string_list(provenance):
+            _add_error(
+                errors,
+                "kind_form_invalid",
+                f"{where} provenance must be a list of strings",
+            )
+        result[str(kind_id)] = (definitions, numeric_refs)
+    return result
+
+
+def _validate_kind_presets(
+    value: Any,
+    kinds: dict[str, tuple[dict[str, dict[str, Any]], set[str]]],
+    errors: list[str],
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        _add_error(
+            errors,
+            "kind_param_invalid",
+            "'kind_presets' must be a mapping",
+        )
+        return
+    for name, preset in value.items():
+        where = f"kind_presets['{name}']"
+        if not _is_string(name, nonempty=True) or not isinstance(preset, dict):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{where} must have a string name and mapping value",
+            )
+            continue
+        kind_id = preset.get("kind")
+        if kind_id not in kinds:
+            _add_error(
+                errors,
+                "kind_unknown",
+                f"{where} references unknown kind {kind_id!r}",
+            )
+            continue
+        if not _is_string(preset.get("title"), nonempty=True):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{where} missing 'title'",
+            )
+        _validate_param_values(
+            preset.get("params", {}), kinds[kind_id][0], where, errors
         )
 
 
@@ -549,7 +1781,7 @@ def validate_menu(data: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["menu must be a mapping/dict"]
-    _validate_schema_key(data, MENU_SCHEMA, errors)
+    _validate_schema_key(data, ALLOWED_MENU_SCHEMAS, errors, "menu_invalid")
 
     currency = data.get("currency")
     if not _is_string(currency, nonempty=True):
@@ -584,10 +1816,12 @@ def validate_menu(data: Any) -> list[str]:
                     errors.append(f"{where} must be a mapping")
                     continue
                 price = entry.get("usd_per_unit")
-                if not _is_number(price) or price < 0:
-                    errors.append(
-                        f"{where} 'usd_per_unit' must be a non-negative number"
-                    )
+                _validate_cost_scalar(
+                    price,
+                    f"{where} 'usd_per_unit'",
+                    errors,
+                    regular_rule="menu_invalid",
+                )
                 provenance = entry.get("provenance")
                 if provenance is not None and not _is_string_list(provenance):
                     errors.append(
@@ -598,6 +1832,9 @@ def validate_menu(data: Any) -> list[str]:
                     errors.append(
                         f"{where} 'derivation' must be a string or null"
                     )
+
+    kinds = _validate_kinds(data, errors)
+    _validate_kind_presets(data.get("kind_presets"), kinds, errors)
 
     items = data.get("items")
     if not isinstance(items, list):
@@ -620,9 +1857,44 @@ def validate_menu(data: Any) -> list[str]:
         else:
             seen_ids.add(item_id)
         label = f"{where} ('{item_id}')"
-        for key in ("type", "title", "what", "evidence"):
+        kind_id = item.get("kind")
+        kind_backed = kind_id is not None
+        kind_definition: Optional[
+            tuple[dict[str, dict[str, Any]], set[str]]
+        ] = None
+        if kind_backed:
+            if not _is_string(kind_id, nonempty=True) or kind_id not in kinds:
+                _add_error(
+                    errors,
+                    "kind_unknown",
+                    f"{label} references unknown kind {kind_id!r}",
+                )
+            else:
+                kind_definition = kinds[kind_id]
+                _validate_param_values(
+                    item.get("params", {}),
+                    kind_definition[0],
+                    label,
+                    errors,
+                )
+        elif "params" in item:
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{label} has params but no kind",
+            )
+        required_text: tuple[str, ...] = ("what", "evidence")
+        if not kind_backed:
+            required_text = ("type", "title", *required_text)
+        for key in required_text:
             if not _is_string(item.get(key), nonempty=True):
                 errors.append(f"{label} missing '{key}'")
+        if kind_backed:
+            for key in ("type", "title"):
+                if key in item and not _is_string(
+                    item.get(key), nonempty=True
+                ):
+                    errors.append(f"{label} '{key}' must be a string")
         status = item.get("status")
         if not _is_string(status) or status not in VALID_ITEM_STATUSES:
             errors.append(
@@ -653,7 +1925,9 @@ def validate_menu(data: Any) -> list[str]:
             )
         if not _is_optional_string(item.get("revenue_unlock")):
             errors.append(f"{label} 'revenue_unlock' must be a string or null")
-        _validate_resourcing(item.get("resourcing"), label, errors)
+        if not kind_backed or "resourcing" in item:
+            _validate_resourcing(item.get("resourcing"), label, errors)
+        _validate_revenue(item.get("revenue"), label, errors, parametric=False)
     return errors
 
 
@@ -662,7 +1936,7 @@ def validate_rates(data: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["rates must be a mapping/dict"]
-    _validate_schema_key(data, RATES_SCHEMA, errors)
+    _validate_schema_key(data, ALLOWED_RATES_SCHEMAS, errors, "rates_invalid")
 
     if not _is_string(data.get("provider"), nonempty=True):
         errors.append("missing required key: 'provider'")
@@ -702,10 +1976,27 @@ def validate_rates(data: Any) -> list[str]:
             seen_roles.add(name)
         label = f"{where} ('{name}')"
         loaded = role.get("loaded_usd")
-        if not _is_number(loaded) or loaded <= 0:
-            errors.append(f"{label} 'loaded_usd' must be a positive number")
-        if not _is_number_or_none(role.get("base_usd")):
-            errors.append(f"{label} 'base_usd' must be a number or null")
+        _validate_cost_scalar(
+            loaded,
+            f"{label} 'loaded_usd'",
+            errors,
+            regular_rule="rates_invalid",
+            positive=True,
+        )
+        base = role.get("base_usd")
+        if base is not None:
+            _validate_cost_scalar(
+                base,
+                f"{label} 'base_usd'",
+                errors,
+                regular_rule="rates_invalid",
+            )
+        capacity = role.get("capacity_fte")
+        if capacity is not None and (not _is_number(capacity) or capacity < 0):
+            errors.append(
+                f"{label} 'capacity_fte' must be a non-negative number "
+                "or null"
+            )
         if not _is_optional_string(role.get("soc")):
             errors.append(f"{label} 'soc' must be a string or null")
         components = role.get("components")
@@ -721,11 +2012,12 @@ def validate_rates(data: Any) -> list[str]:
                     if not _is_string(comp.get("name"), nonempty=True):
                         errors.append(f"{cwhere} missing 'name'")
                     amount = comp.get("amount_usd")
-                    if not _is_number(amount) or amount < 0:
-                        errors.append(
-                            f"{cwhere} 'amount_usd' must be a "
-                            "non-negative number"
-                        )
+                    _validate_cost_scalar(
+                        amount,
+                        f"{cwhere} 'amount_usd'",
+                        errors,
+                        regular_rule="rates_invalid",
+                    )
                     basis = comp.get("basis")
                     if (
                         not _is_string(basis)
@@ -748,12 +2040,20 @@ def validate_rates(data: Any) -> list[str]:
                     errors.append(
                         f"{label} benchmark.source must be a string or null"
                     )
-                for key in ("percentile", "value_usd"):
-                    if not _is_number_or_none(benchmark.get(key)):
-                        errors.append(
-                            f"{label} benchmark.{key} must be a number "
-                            f"or null"
-                        )
+                percentile = benchmark.get("percentile")
+                if not _is_number_or_none(percentile):
+                    errors.append(
+                        f"{label} benchmark.percentile must be a number "
+                        "or null"
+                    )
+                benchmark_value = benchmark.get("value_usd")
+                if benchmark_value is not None:
+                    _validate_cost_scalar(
+                        benchmark_value,
+                        f"{label} benchmark.value_usd",
+                        errors,
+                        regular_rule="rates_invalid",
+                    )
         provenance = role.get("provenance")
         if provenance is not None and not _is_string_list(provenance):
             errors.append(
@@ -762,12 +2062,43 @@ def validate_rates(data: Any) -> list[str]:
     return errors
 
 
-def validate_selection(data: Any) -> list[str]:
+def _selection_menu_context(
+    menu: Any,
+) -> tuple[dict[str, dict[str, dict[str, Any]]], set[str]]:
+    if menu is None:
+        return {}, set()
+    if hasattr(menu, "menu_data"):
+        menu = menu.menu_data
+    elif isinstance(menu, Menu):
+        menu = menu.raw
+    if not isinstance(menu, dict):
+        return {}, set()
+    item_ids = {
+        str(item.get("id"))
+        for item in menu.get("items", [])
+        if isinstance(item, dict) and _is_string(item.get("id"), nonempty=True)
+    }
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    raw_kinds = menu.get("kinds")
+    if isinstance(raw_kinds, dict):
+        for kind_id, kind in raw_kinds.items():
+            if not isinstance(kind, dict):
+                continue
+            scratch: list[str] = []
+            result[str(kind_id)] = _validate_param_definitions(
+                kind.get("params"), f"kinds['{kind_id}']", scratch
+            )
+    return result, item_ids
+
+
+def validate_selection(data: Any, menu: Any = None) -> list[str]:
     """Validate a raw ``selection.yaml`` dict. Empty list == valid."""
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["selection must be a mapping/dict"]
-    _validate_schema_key(data, SELECTION_SCHEMA, errors)
+    _validate_schema_key(
+        data, ALLOWED_SELECTION_SCHEMAS, errors, "selection_invalid"
+    )
 
     for key in ("id", "funder"):
         if not _is_string(data.get(key), nonempty=True):
@@ -789,6 +2120,14 @@ def validate_selection(data: Any) -> list[str]:
         or not _is_number(window)
     ):
         errors.append("'window_months' must be an integer > 0")
+    horizon = data.get("horizon_months", window)
+    if (
+        not isinstance(horizon, int)
+        or isinstance(horizon, bool)
+        or horizon <= 0
+        or not _is_number(horizon)
+    ):
+        errors.append("'horizon_months' must be an integer > 0")
 
     org_base = data.get("org_base")
     if org_base is not None:
@@ -804,20 +2143,121 @@ def validate_selection(data: Any) -> list[str]:
     if not isinstance(lines, list):
         errors.append("'selections' must be a list (may be empty)")
         return errors
+    kind_definitions, menu_item_ids = _selection_menu_context(menu)
+    check_kind_refs = menu is not None
+    seen_instance_ids: set[str] = set()
     for i, line in enumerate(lines):
         where = f"selections[{i}]"
         if not isinstance(line, dict):
             errors.append(f"{where} must be a mapping")
             continue
-        if not _is_string(line.get("item"), nonempty=True):
+        has_item = "item" in line and line.get("item") is not None
+        has_instance = "instance" in line and line.get("instance") is not None
+        if has_item == has_instance:
+            detail = "missing 'item'" if not has_item else "both are present"
+            _add_error(
+                errors,
+                "selection_invalid",
+                f"{where} must contain exactly one of 'item' or "
+                f"'instance' ({detail})",
+            )
+        elif has_item and not _is_string(line.get("item"), nonempty=True):
             errors.append(f"{where} missing 'item'")
         if not _is_number(line.get("fraction")):
             errors.append(
                 f"{where} ('{line.get('item')}') 'fraction' must be "
                 f"a number"
             )
+        start = line.get("start_month", 0)
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or start < 0
+            or not _is_number(start)
+        ):
+            errors.append(f"{where} 'start_month' must be an integer >= 0")
         if not _is_optional_string(line.get("note")):
             errors.append(f"{where} 'note' must be a string or null")
+        if not has_instance:
+            continue
+        instance = line.get("instance")
+        if not isinstance(instance, dict):
+            _add_error(
+                errors,
+                "selection_invalid",
+                f"{where} 'instance' must be a mapping",
+            )
+            continue
+        iwhere = f"{where} instance"
+        instance_id = instance.get("id")
+        if not _is_string(instance_id, nonempty=True) or not _ITEM_ID_RE.match(
+            instance_id
+        ):
+            _add_error(
+                errors,
+                "instance_id_collision",
+                f"{iwhere} id must match [a-z0-9-]+",
+            )
+        elif instance_id in seen_instance_ids or instance_id in menu_item_ids:
+            _add_error(
+                errors,
+                "instance_id_collision",
+                f"{iwhere} id '{instance_id}' repeats or collides with a "
+                "menu item id",
+            )
+        else:
+            seen_instance_ids.add(instance_id)
+        kind_id = instance.get("kind")
+        if not _is_string(kind_id, nonempty=True):
+            _add_error(
+                errors,
+                "kind_unknown",
+                f"{iwhere} missing 'kind'",
+            )
+        elif check_kind_refs and kind_id not in kind_definitions:
+            _add_error(
+                errors,
+                "kind_unknown",
+                f"{iwhere} references unknown kind {kind_id!r}",
+            )
+        elif kind_id in kind_definitions:
+            _validate_param_values(
+                instance.get("params", {}),
+                kind_definitions[kind_id],
+                iwhere,
+                errors,
+            )
+        elif not isinstance(instance.get("params", {}), dict):
+            _add_error(
+                errors,
+                "kind_param_invalid",
+                f"{iwhere} 'params' must be a mapping",
+            )
+        for text_key in ("title", "type"):
+            if not _is_optional_string(instance.get(text_key)):
+                errors.append(
+                    f"{iwhere} '{text_key}' must be a string or null"
+                )
+        if "resourcing" in instance:
+            _validate_resourcing(instance.get("resourcing"), iwhere, errors)
+        if not _is_int_or_none(instance.get("duration_months")):
+            errors.append(
+                f"{iwhere} 'duration_months' must be an integer or null"
+            )
+        dependencies = instance.get("dependencies")
+        if dependencies is not None and not _is_string_list(dependencies):
+            errors.append(
+                f"{iwhere} 'dependencies' must be a list of non-empty "
+                "strings"
+            )
+        provenance = instance.get("provenance")
+        if provenance is not None and not _is_string_list(provenance):
+            errors.append(
+                f"{iwhere} 'provenance' must be a list of non-empty strings"
+            )
+        _validate_revenue(
+            instance.get("revenue"), iwhere, errors, parametric=False
+        )
     if not _is_optional_string(data.get("notes")):
         errors.append("'notes' must be a string or null")
     return errors
