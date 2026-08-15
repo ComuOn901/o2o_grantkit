@@ -1,0 +1,68 @@
+{
+  "generated_from": {
+    "menu_schema": "grantkit-menu/v0",
+    "currency": "USD",
+    "rates_provider": "eggnest-employer 0.2.0",
+    "rates_generated": "2026-08-15",
+    "rates_scenario": "synthetic-tests"
+  },
+  "selection_id": "sel-live-a",
+  "funder": "Synthetic Fund A",
+  "status": "live",
+  "window_months": 12,
+  "currency": "USD",
+  "target_usd": 500000.0,
+  "items": [
+    {
+      "item_id": "alpha",
+      "title": "Alpha coverage",
+      "type": "program-coverage",
+      "fraction": 0.5,
+      "item_one_time_usd": 208750.0,
+      "item_recurring_usd_per_year": 0.0,
+      "one_time_usd": 104375.0,
+      "recurring_usd": 0.0,
+      "funded_usd": 104375.0
+    },
+    {
+      "item_id": "gamma-units",
+      "title": "Gamma evaluation",
+      "type": "research-eval",
+      "fraction": 0.5,
+      "item_one_time_usd": 25000.0,
+      "item_recurring_usd_per_year": 0.0,
+      "one_time_usd": 12500.0,
+      "recurring_usd": 0.0,
+      "funded_usd": 12500.0
+    }
+  ],
+  "personnel": {
+    "Encoding Lead": {
+      "fte_months": 3.0,
+      "loaded_usd": 320000.0,
+      "usd": 80000.0
+    },
+    "Research Engineer": {
+      "fte_months": 1.5,
+      "loaded_usd": 195000.0,
+      "usd": 24375.0
+    }
+  },
+  "categories": {
+    "labor_usd": 104375.0,
+    "units_usd": 12500.0,
+    "contract_usd": 0.0,
+    "flat_usd": 0.0,
+    "recurring_usd": 0.0,
+    "org_base_usd": 120000.0,
+    "overhead_usd": 8181.250000000001
+  },
+  "org_base": {
+    "item": "org-floor",
+    "fraction": 0.1,
+    "usd": 120000.0
+  },
+  "overhead_rate": 0.07,
+  "total_usd": 245056.25,
+  "fit": 0.4901125
+}
