@@ -411,10 +411,11 @@ uniformly over the window for reporting.
 Scheduled work may extend beyond `window_months`. Those dollars remain in the
 later periods rather than disappearing, and `outside_window_usd` separately
 reports the portion beyond the window, including its associated overhead.
-More than USD 1 produces the advisory `phase_outside_window` warning. This
-reconciles two invariants: the v0 total is window-independent except for
-recurring cost, and the sum of period category totals equals the compiled
-selection total to `1e-6`.
+For a `grantkit-selection/v1` document, more than USD 1 produces the advisory
+`phase_outside_window` warning. Legacy v0 selections receive the same phased
+data but retain their v0 gate output. This reconciles two invariants: the v0
+total is window-independent except for recurring cost, and the sum of period
+category totals equals the compiled selection total to `1e-6`.
 
 Each period reports cost by category plus two staffing maps:
 
