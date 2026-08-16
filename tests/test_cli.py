@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from grantkit import __version__
@@ -12,13 +13,14 @@ def _init(runner, path, funder="nuffield-rda"):
     return runner.invoke(main, ["init", "--funder", funder, str(path)])
 
 
-def test_five_verbs_registered():
+def test_six_verbs_registered():
     assert set(main.commands) == {
         "init",
         "check",
         "build",
         "review",
         "status",
+        "budget",
     }
 
 
@@ -59,6 +61,23 @@ def test_check_json_is_valid(tmp_path):
     result = runner.invoke(main, ["check", "--json", str(tmp_path)])
     payload = json.loads(result.output)
     assert set(payload) == {"errors", "warnings", "items"}
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ("- not\n- a mapping\n", "must contain a YAML mapping"),
+        ("grant: [unterminated\n", "Could not parse grant.yaml"),
+        ("sections: [not-a-mapping]\n", "sections[0] must be a mapping"),
+        ("sections: [{id: []}]\n", "sections[0].id must be a string"),
+    ],
+)
+def test_check_reports_hostile_grant_yaml_cleanly(tmp_path, payload, message):
+    (tmp_path / "grant.yaml").write_text(payload, encoding="utf-8")
+    result = CliRunner().invoke(main, ["check", str(tmp_path)])
+    assert result.exit_code == 2
+    assert message in result.output
+    assert "Traceback" not in result.output
 
 
 def test_status_json_writes_file(tmp_path):

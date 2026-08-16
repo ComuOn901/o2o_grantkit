@@ -4,6 +4,32 @@ All notable changes to GrantKit are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Budget model** (`grantkit budget`, the sixth verb — agreed before
+  being added). Compiles a proposal budget from three YAML documents: a
+  priced work-item **menu** (`grantkit-menu/v0`), a **rates** contract
+  from a rates provider (`grantkit-rates/v0`; eggnest-employer is the
+  reference), and per-proposal **selections** over the menu
+  (`grantkit-selection/v0`). Deterministic compile (labor from
+  FTE-months x loaded rates, named unit costs, contracts, flat blocks,
+  window-prorated recurring, fractional org base, single-application
+  overhead honoring `overhead_included`), rich tables, `--json`,
+  markdown `--output`, and a `--narrative` skeleton rendered from the
+  compiled objects only.
+- **Portfolio integrity gates** (`grantkit budget --check`, and inside
+  `grantkit check` when `grant.yaml` binds a selection via
+  `budget_model:`): schema validation for all three documents, unknown
+  role/unit/item references, unresolved and cyclic dependencies,
+  fraction ranges, duplicate lines, org-base typing, the **co-funding
+  gate** (an item's fractions across live/awarded selections must not
+  exceed 1), advisory rates heuristics (suspicious load factors,
+  component sums that don't reconcile), an advisory target check, and
+  funder caps from the bound rule pack applied to the compiled total.
+- Docs: `docs/budget-model.md` and `docs/rates-contract.md`.
+
 ## [0.2.1] - 2026-07-07
 
 Fixes from the first two real-application runs (PBIF round 2, Nuffield

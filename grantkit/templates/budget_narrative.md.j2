@@ -1,0 +1,18 @@
+## Narrative skeleton
+
+{% for item in items %}
+### {{ item.title }}
+
+{{ item.what }}
+
+Completion evidence: {{ item.evidence }}
+
+Cost: {{ item.cost_line }}.
+
+{% endfor %}
+## Budget justification
+
+{% for role in personnel %}
+- {{ role.role }}: {{ role.fte_months }} FTE-months at {{ role.loaded }} fully loaded per year = {{ role.usd }}.{% if role.benchmark %} {{ role.benchmark }}{% endif %}
+
+{% endfor %}

@@ -44,8 +44,9 @@ Schema (top-level keys)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, TypeGuard
 
 VALID_SEVERITIES = {"error", "warning", "info"}
 VALID_LOCALES = {"en-US", "en-GB"}
@@ -231,10 +232,34 @@ def _is_int_or_none(value: Any) -> bool:
     )
 
 
+def _is_string(value: Any, *, nonempty: bool = False) -> TypeGuard[str]:
+    if not isinstance(value, str) or (nonempty and not value):
+        return False
+    if any(
+        (ord(char) < 32 and char not in "\t\n\r") or 0x7F <= ord(char) <= 0x9F
+        for char in value
+    ):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _is_string_or_none(value: Any) -> bool:
+    return value is None or _is_string(value)
+
+
 def _is_number_or_none(value: Any) -> bool:
-    return value is None or (
-        isinstance(value, (int, float)) and not isinstance(value, bool)
-    )
+    if value is None:
+        return True
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def validate_pack(data: Any) -> list[str]:
@@ -249,21 +274,25 @@ def validate_pack(data: Any) -> list[str]:
 
     # Required top-level keys
     for key in ("id", "name"):
-        if not data.get(key):
+        if not _is_string(data.get(key), nonempty=True):
             errors.append(f"missing required key: '{key}'")
 
-    if "id" in data and not isinstance(data["id"], str):
-        errors.append("'id' must be a string")
+    for key in ("program", "version", "source_url", "provenance"):
+        if not _is_string_or_none(data.get(key)):
+            errors.append(f"'{key}' must be a string or null")
 
     locale = data.get("locale", "en-US")
-    if locale not in VALID_LOCALES:
+    if not _is_string(locale) or locale not in VALID_LOCALES:
         errors.append(
-            f"invalid locale '{locale}' (allowed: {sorted(VALID_LOCALES)})"
+            f"invalid locale {locale!r} (allowed: {sorted(VALID_LOCALES)})"
         )
 
-    if data.get("content_engine") not in VALID_CONTENT_ENGINES:
+    content_engine = data.get("content_engine")
+    if (
+        content_engine is not None and not _is_string(content_engine)
+    ) or content_engine not in VALID_CONTENT_ENGINES:
         errors.append(
-            f"invalid content_engine '{data.get('content_engine')}' "
+            f"invalid content_engine {content_engine!r} "
             f"(allowed: {sorted(str(e) for e in VALID_CONTENT_ENGINES)})"
         )
 
@@ -279,14 +308,19 @@ def validate_pack(data: Any) -> list[str]:
                 errors.append(f"{where} must be a mapping")
                 continue
             sid = section.get("id")
-            if not sid:
+            if not _is_string(sid, nonempty=True):
                 errors.append(f"{where} missing 'id'")
             elif sid in seen_ids:
                 errors.append(f"{where} duplicate section id '{sid}'")
             else:
                 seen_ids.add(sid)
-            if not section.get("title"):
+            if not _is_string(section.get("title"), nonempty=True):
                 errors.append(f"{where} ('{sid}') missing 'title'")
+            for key in ("description", "file", "stage"):
+                if not _is_string_or_none(section.get(key)):
+                    errors.append(
+                        f"{where} ('{sid}') '{key}' must be a string or null"
+                    )
             for limit_key in ("word_limit", "char_limit", "page_limit"):
                 if not _is_int_or_none(section.get(limit_key)):
                     errors.append(
@@ -298,13 +332,13 @@ def validate_pack(data: Any) -> list[str]:
                 errors.append(
                     f"{where} ('{sid}') 'required' must be a boolean"
                 )
-            if (
-                "format" in section
-                and section["format"] not in VALID_SECTION_FORMATS
+            if "format" in section and (
+                not _is_string(section["format"])
+                or section["format"] not in VALID_SECTION_FORMATS
             ):
                 errors.append(
                     f"{where} ('{sid}') invalid format "
-                    f"'{section['format']}' "
+                    f"{section['format']!r} "
                     f"(allowed: {sorted(VALID_SECTION_FORMATS)})"
                 )
 
@@ -318,17 +352,30 @@ def validate_pack(data: Any) -> list[str]:
             if not isinstance(rule, dict):
                 errors.append(f"{where} must be a mapping")
                 continue
-            if not rule.get("id"):
+            if not _is_string(rule.get("id"), nonempty=True):
                 errors.append(f"{where} missing 'id'")
-            if not rule.get("description"):
+            if not _is_string(rule.get("description"), nonempty=True):
                 errors.append(
                     f"{where} ('{rule.get('id')}') missing 'description'"
                 )
             severity = rule.get("severity", "error")
-            if severity not in VALID_SEVERITIES:
+            if not _is_string(severity) or severity not in VALID_SEVERITIES:
                 errors.append(
-                    f"{where} ('{rule.get('id')}') invalid severity '{severity}' "
+                    f"{where} ('{rule.get('id')}') invalid severity "
+                    f"{severity!r} "
                     f"(allowed: {sorted(VALID_SEVERITIES)})"
+                )
+            for key in ("citation", "url", "quote"):
+                if not _is_string_or_none(rule.get(key)):
+                    errors.append(
+                        f"{where} ('{rule.get('id')}') '{key}' must be a "
+                        "string or null"
+                    )
+            applies_to = rule.get("applies_to", "all")
+            if not _is_string(applies_to, nonempty=True):
+                errors.append(
+                    f"{where} ('{rule.get('id')}') 'applies_to' must be a "
+                    "non-empty string"
                 )
 
     # Budget rules
@@ -346,6 +393,19 @@ def validate_pack(data: Any) -> list[str]:
                 budget.get("mtdc_excludes"), list
             ):
                 errors.append("budget_rules.mtdc_excludes must be a list")
+            elif not all(
+                _is_string(entry, nonempty=True)
+                for entry in budget.get("mtdc_excludes", []) or []
+            ):
+                errors.append(
+                    "budget_rules.mtdc_excludes must contain non-empty strings"
+                )
+            if not _is_string(budget.get("currency", "USD"), nonempty=True):
+                errors.append(
+                    "budget_rules.currency must be a non-empty string"
+                )
+            if not _is_string_or_none(budget.get("notes")):
+                errors.append("budget_rules.notes must be a string or null")
 
     # Portal
     portal = data.get("portal")
@@ -356,6 +416,9 @@ def validate_pack(data: Any) -> list[str]:
             for key in ("accepts_markdown", "plain_text_boxes"):
                 if key in portal and not isinstance(portal[key], bool):
                     errors.append(f"portal.{key} must be a boolean")
+            for key in ("url", "notes"):
+                if not _is_string_or_none(portal.get(key)):
+                    errors.append(f"portal.{key} must be a string or null")
 
     # Review rubric
     rubric = data.get("review_rubric", [])
@@ -367,9 +430,15 @@ def validate_pack(data: Any) -> list[str]:
             if not isinstance(crit, dict):
                 errors.append(f"{where} must be a mapping")
                 continue
-            if not crit.get("id"):
+            if not _is_string(crit.get("id"), nonempty=True):
                 errors.append(f"{where} missing 'id'")
-            if not crit.get("name"):
+            if not _is_string(crit.get("name"), nonempty=True):
                 errors.append(f"{where} ('{crit.get('id')}') missing 'name'")
+            for key in ("description", "citation", "url"):
+                if not _is_string_or_none(crit.get(key)):
+                    errors.append(
+                        f"{where} ('{crit.get('id')}') '{key}' must be a "
+                        "string or null"
+                    )
 
     return errors

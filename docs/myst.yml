@@ -20,6 +20,8 @@ project:
         - file: cli/check.md
         - file: cli/build.md
     - file: packs.md
+    - file: budget-model.md
+    - file: rates-contract.md
     - file: artifacts.md
     - file: mcp-and-ci.md
     - title: Features

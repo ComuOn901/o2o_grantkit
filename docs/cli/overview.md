@@ -1,8 +1,8 @@
 # CLI overview
 
-GrantKit has exactly five verbs. Each takes an optional path to the grant
-directory (a folder containing `grant.yaml`), defaulting to the current
-directory.
+GrantKit has exactly six verbs. Each takes an optional path — the grant
+directory (a folder containing `grant.yaml`), or for `budget` a
+portfolio directory — defaulting to the current directory.
 
 ```bash
 grantkit COMMAND [OPTIONS] [PATH]
@@ -15,6 +15,7 @@ grantkit COMMAND [OPTIONS] [PATH]
 | [`build`](build.md) | Compile responses into one document; always writes `status.json`. |
 | [`review`](#review) | Emit a review packet for an AI agent (no AI calls). |
 | [`status`](#status) | Completion %, per-section word counts, deadline countdown. |
+| [`budget`](#budget) | Compile a budget from a menu + rates + a selection. |
 
 ## init
 
@@ -67,10 +68,25 @@ Prints completion percentage, per-section word counts, and a deadline
 countdown. `--json` writes (and prints) `status.json` — see
 [artifacts](../artifacts.md).
 
+## budget
+
+```bash
+grantkit budget [--selection ID] [--check] [--json] [--output FILE] [--narrative] [PATH]
+```
+
+Compiles a portfolio selection — a proposal expressed as fractions of a
+priced work-item menu — into budget tables, a markdown budget document
+(`--output`), or structured JSON. `--check` runs the integrity gates
+only, including the co-funding gate that errors when live or awarded
+proposals sell the same item past 100%. PATH is a portfolio directory or a grant
+project bound via `budget_model:`. See the
+[budget model](../budget-model.md) and
+[rates contract](../rates-contract.md).
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | Success (for `check`: no errors, or no warnings under `--strict`). |
-| `1` | `check` found errors (or warnings under `--strict`). |
-| `2` | Usage error — e.g. no `grant.yaml`, unknown funder pack, missing format dependency. |
+| `1` | `check` found errors (or warnings under `--strict`); `budget`/`budget --check` found gate errors. |
+| `2` | Usage error — e.g. no `grant.yaml`, unknown funder pack, missing format dependency, unreadable portfolio or unknown selection. |

@@ -96,6 +96,54 @@ def test_schema_rejects_bad_severity():
     assert any("severity" in e for e in errors)
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"locale": {}},
+        {"content_engine": []},
+        {"program": []},
+        {"sections": [{"id": [], "title": "A", "format": []}]},
+        {
+            "formatting_rules": [
+                {"id": "r", "description": "Rule", "severity": []}
+            ]
+        },
+        {"budget_rules": {"mtdc_excludes": [1], "currency": []}},
+        {"portal": {"url": []}},
+        {"review_rubric": [{"id": [], "name": "Criterion"}]},
+    ],
+    ids=(
+        "locale",
+        "content-engine",
+        "top-text",
+        "section",
+        "formatting-rule",
+        "budget-rule",
+        "portal",
+        "rubric",
+    ),
+)
+def test_schema_rejects_wrong_shaped_known_fields(extra):
+    data = {"id": "x", "name": "X", **extra}
+    assert validate_pack(data)
+
+
+@pytest.mark.parametrize("value", ["\ud800", "\x1b[31m", "\x00"])
+def test_schema_rejects_unsafe_pack_text(value):
+    assert validate_pack({"id": "x", "name": value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize(
+    "key", ["total_cap", "annual_cap", "indirect_rate_max"]
+)
+def test_schema_rejects_non_finite_budget_rules(key, value):
+    errors = validate_pack(
+        {"id": "x", "name": "X", "budget_rules": {key: value}}
+    )
+    assert any(f"budget_rules.{key}" in error for error in errors)
+
+
 # -- NSF pack: preserves the folded-in PAPPG rules + citations ----------
 
 
