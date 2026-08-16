@@ -105,6 +105,7 @@ def model_bundle(portfolio: Portfolio) -> dict[str, Any]:
             "rates": portfolio.rates.schema,
             "provider": portfolio.rates.provider,
             "generated": portfolio.rates.generated,
+            "scenario": portfolio.rates.scenario,
         },
         "currency": portfolio.menu.currency,
         "overheads": (

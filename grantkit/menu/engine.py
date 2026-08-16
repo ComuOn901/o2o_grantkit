@@ -20,9 +20,10 @@ Cost model (documented in ``docs/budget-model.md``)::
         work = f x one_time + f x recurring x window_months/12
       org_base = fraction x one_time(org_base.item)
                  (the window does NOT prorate flat blocks)
-      overhead applies to every component EXCEPT amounts that came from a
-      field covered by overhead_included: true (those already contain the
-      fee, so the selection-level overhead must not re-apply)
+      overhead applies to every component EXCEPT amounts covered by
+      overhead_included: true (those already contain the fee, so the
+      selection-level overhead must not re-apply). Bottoms-up org bases omit
+      that legacy flag, making roster labor and non-personnel overhead-bearing.
       total = work + org_base + overhead
       fit  = total / target_usd, when a target is set
 
@@ -65,10 +66,14 @@ class ItemCost:
     roster_lines: list[dict[str, Any]] = field(
         default_factory=list, repr=False
     )
-    #: Direct contract dollars, excluding roster non-personnel run rate.
+    #: Direct contract dollars, excluding non-personnel inputs.
     direct_contract_usd: float = field(default=0.0, repr=False)
-    #: Roster non-personnel dollars included in ``contract_usd``.
+    #: Legacy and itemized non-personnel dollars in ``contract_usd``.
     non_personnel_usd: float = field(default=0.0, repr=False)
+    #: Itemized, duration-costed non-personnel lines (legacy lump excluded).
+    non_personnel_lines: list[dict[str, Any]] = field(
+        default_factory=list, repr=False
+    )
 
     @property
     def one_time_usd(self) -> float:
@@ -83,9 +88,10 @@ class ItemCost:
 
         With ``overhead_included: true`` the ``contract_usd`` /
         ``amount_usd`` dollars already contain org overheads. Roster labor
-        follows the same rule because a roster-based org base is a single
-        overhead-inclusive block; ordinary item labor and units continue to
-        bear overhead under the v0 contract.
+        and non-personnel follow the same legacy rule because the flag marks
+        the whole block fee-inclusive; ordinary item labor and units continue
+        to bear overhead under the v0 contract. New bottoms-up bases omit the
+        flag.
         """
         if self.overhead_included:
             ordinary_labor = sum(
@@ -111,6 +117,8 @@ class ItemCost:
                 role: dict(spend) for role, spend in self.labor_by_role.items()
             },
             "roster_by_role": _roster_by_role(self.roster_lines),
+            "non_personnel_usd": self.non_personnel_usd,
+            "non_personnel": [dict(line) for line in self.non_personnel_lines],
         }
 
 
@@ -175,6 +183,7 @@ class SelectionCost:
     org_base_item: Optional[str] = None
     org_base_fraction: float = 0.0
     org_base_usd: float = 0.0
+    org_base_non_personnel: list[dict[str, Any]] = field(default_factory=list)
     overhead_rate: float = 0.0
     overhead_usd: float = 0.0
     total_usd: float = 0.0
@@ -229,6 +238,9 @@ class SelectionCost:
                     "item": self.org_base_item,
                     "fraction": self.org_base_fraction,
                     "usd": self.org_base_usd,
+                    "non_personnel": [
+                        dict(line) for line in self.org_base_non_personnel
+                    ],
                 }
                 if self.org_base_item
                 else None
@@ -326,9 +338,28 @@ def item_cost(
             )
         units += count * unit_costs[unit].usd_per_unit
     direct_contract = item.resourcing.contract_usd or 0.0
-    non_personnel = (
+    legacy_non_personnel = (
         (item.resourcing.non_personnel_usd_per_year or 0.0) * duration / 12.0
     )
+    non_personnel_lines: list[dict[str, Any]] = []
+    for line in item.resourcing.non_personnel:
+        amount = (
+            float(line.usd_total)
+            if line.usd_total is not None
+            else float(line.usd_per_year or 0.0) * duration / 12.0
+        )
+        non_personnel_lines.append(
+            {
+                "label": line.label,
+                "usd": amount,
+                "basis": line.basis,
+                "source": line.source,
+            }
+        )
+    itemized_non_personnel = sum(
+        float(line["usd"]) for line in non_personnel_lines
+    )
+    non_personnel = legacy_non_personnel + itemized_non_personnel
     return ItemCost(
         item_id=item.id,
         labor_usd=labor,
@@ -342,6 +373,7 @@ def item_cost(
         roster_lines=roster_lines,
         direct_contract_usd=direct_contract,
         non_personnel_usd=non_personnel,
+        non_personnel_lines=non_personnel_lines,
     )
 
 
@@ -522,6 +554,13 @@ def selection_cost(
         cost.org_base_item = base_id
         cost.org_base_fraction = base_fraction
         cost.org_base_usd = base_fraction * base_cost.one_time_usd
+        cost.org_base_non_personnel = [
+            {
+                **line,
+                "usd": base_fraction * float(line["usd"]),
+            }
+            for line in base_cost.non_personnel_lines
+        ]
         overhead_base += (
             base_fraction * base_cost.overhead_bearing_one_time_usd
         )

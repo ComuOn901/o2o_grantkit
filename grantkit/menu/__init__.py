@@ -5,10 +5,12 @@ Three documents — an org's priced work-item **menu**, a provider's
 deterministically into a budget. ``grantkit budget`` is the CLI entry;
 :func:`run_gates` is the integrity linter (including the co-funding gate);
 :func:`compile_selection` is the pure compile API.
+:func:`compile_combined` builds a deterministic multi-selection scenario.
 
 See ``docs/budget-model.md`` and ``docs/rates-contract.md``.
 """
 
+from .combine import CombinedCost, compile_combined
 from .engine import (
     ItemCost,
     SelectionCost,
@@ -16,7 +18,7 @@ from .engine import (
     item_cost,
     selection_cost,
 )
-from .gates import run_gates
+from .gates import run_combined_gates, run_gates
 from .loader import Portfolio, PortfolioError, load_portfolio
 from .model import model_bundle
 from .resolve import (
@@ -31,6 +33,7 @@ from .schema import (
     KindPreset,
     Menu,
     MenuItem,
+    NonPersonnelLine,
     OrgBase,
     Overheads,
     RateBenchmark,
@@ -60,12 +63,15 @@ __all__ = [
     "item_cost",
     "ItemCost",
     "SelectionCost",
+    "compile_combined",
+    "CombinedCost",
     "resolve_item",
     "evaluate_form",
     "ResolvedItem",
     "ResolvedRevenueStream",
     # Gates
     "run_gates",
+    "run_combined_gates",
     # Schemas
     "Menu",
     "MenuItem",
@@ -73,6 +79,7 @@ __all__ = [
     "Overheads",
     "Resourcing",
     "RosterLine",
+    "NonPersonnelLine",
     "Kind",
     "KindPreset",
     "InlineInstance",

@@ -290,6 +290,17 @@ class RosterLine:
 
 
 @dataclass
+class NonPersonnelLine:
+    """One itemized non-personnel cost in a bottoms-up org base."""
+
+    label: str
+    usd_total: Optional[float] = None
+    usd_per_year: Optional[float] = None
+    basis: Optional[str] = None
+    source: Optional[str] = None
+
+
+@dataclass
 class Resourcing:
     """How a menu item is costed. At least one costed field is present.
 
@@ -306,6 +317,7 @@ class Resourcing:
     overhead_included: bool = False
     roster: list[RosterLine] = field(default_factory=list)
     non_personnel_usd_per_year: Optional[float] = None
+    non_personnel: list[NonPersonnelLine] = field(default_factory=list)
 
 
 @dataclass
@@ -405,6 +417,33 @@ def _parse_roster(value: Any) -> list[RosterLine]:
     return result
 
 
+def _parse_non_personnel(value: Any) -> list[NonPersonnelLine]:
+    if not isinstance(value, list):
+        return []
+    result: list[NonPersonnelLine] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        result.append(
+            NonPersonnelLine(
+                label=str(entry.get("label", "")),
+                usd_total=_as_optional_float(entry.get("usd_total")),
+                usd_per_year=_as_optional_float(entry.get("usd_per_year")),
+                basis=(
+                    str(entry["basis"])
+                    if entry.get("basis") is not None
+                    else None
+                ),
+                source=(
+                    str(entry["source"])
+                    if entry.get("source") is not None
+                    else None
+                ),
+            )
+        )
+    return result
+
+
 def _parse_resourcing(value: Any) -> Resourcing:
     data = value if isinstance(value, dict) else {}
     return Resourcing(
@@ -420,6 +459,7 @@ def _parse_resourcing(value: Any) -> Resourcing:
         non_personnel_usd_per_year=_as_optional_float(
             data.get("non_personnel_usd_per_year")
         ),
+        non_personnel=_parse_non_personnel(data.get("non_personnel")),
     )
 
 
@@ -1164,7 +1204,11 @@ def _validate_menu_schema_version(
                     )
             resourcing = item.get("resourcing")
             if isinstance(resourcing, dict):
-                for construct in ("roster", "non_personnel_usd_per_year"):
+                for construct in (
+                    "roster",
+                    "non_personnel_usd_per_year",
+                    "non_personnel",
+                ):
                     if construct in resourcing:
                         _require_v1_construct(
                             errors,
@@ -1306,6 +1350,54 @@ def _validate_cost_scalar(
     return True
 
 
+def _validate_non_personnel(value: Any, where: str, errors: list[str]) -> None:
+    """Validate itemized non-personnel lines for one resourcing block."""
+    if not isinstance(value, list):
+        errors.append(f"{where} 'non_personnel' must be a list")
+        return
+    labels: set[str] = set()
+    for index, line in enumerate(value):
+        nwhere = f"{where} non_personnel[{index}]"
+        if not isinstance(line, dict):
+            errors.append(f"{nwhere} must be a mapping")
+            continue
+        label = line.get("label")
+        if not _is_string(label, nonempty=True) or not label.strip():
+            errors.append(f"{nwhere} missing non-empty 'label'")
+        else:
+            normalized = label.strip()
+            if normalized in labels:
+                errors.append(
+                    f"{where} non_personnel labels must be unique "
+                    f"(duplicate {normalized!r})"
+                )
+            labels.add(normalized)
+
+        present = [key for key in ("usd_total", "usd_per_year") if key in line]
+        if len(present) != 1:
+            errors.append(
+                f"{nwhere} must contain exactly one of 'usd_total' or "
+                "'usd_per_year'"
+            )
+        for key in present:
+            amount = line[key]
+            if not _is_number(amount) or amount < 0:
+                errors.append(
+                    f"{nwhere} '{key}' must be a finite non-negative number"
+                )
+
+        basis = line.get("basis")
+        if basis is not None and (
+            not _is_string(basis) or basis not in VALID_COMPONENT_BASES
+        ):
+            errors.append(
+                f"{nwhere} 'basis' must be one of "
+                f"{sorted(VALID_COMPONENT_BASES)} or null"
+            )
+        if not _is_optional_string(line.get("source")):
+            errors.append(f"{nwhere} 'source' must be a string or null")
+
+
 def _validate_resourcing(
     resourcing: Any, where: str, errors: list[str]
 ) -> None:
@@ -1360,6 +1452,18 @@ def _validate_resourcing(
             errors,
             regular_rule="menu_invalid",
         )
+    itemized_non_personnel = resourcing.get("non_personnel")
+    if itemized_non_personnel is not None:
+        _validate_non_personnel(itemized_non_personnel, where, errors)
+    if (
+        non_personnel is not None
+        and isinstance(itemized_non_personnel, list)
+        and itemized_non_personnel
+    ):
+        errors.append(
+            f"{where} cannot mix 'non_personnel_usd_per_year' with "
+            "itemized 'non_personnel'"
+        )
     roster = resourcing.get("roster")
     if roster is not None:
         if not isinstance(roster, list):
@@ -1397,12 +1501,16 @@ def _validate_resourcing(
         or resourcing.get("amount_usd") is not None
         or (isinstance(roster, list) and roster)
         or resourcing.get("non_personnel_usd_per_year") is not None
+        or (
+            isinstance(itemized_non_personnel, list) and itemized_non_personnel
+        )
     )
     if not costed:
         errors.append(
             f"{where} resourcing must contain at least one costed field "
             f"(fte_months, units, contract_usd, recurring_usd_per_year, "
-            f"amount_usd, roster, or non_personnel_usd_per_year)"
+            f"amount_usd, roster, non_personnel, or "
+            f"non_personnel_usd_per_year)"
         )
 
 
@@ -2033,6 +2141,22 @@ def _validate_kind_resourcing(
         costed = True
         # Roster fte/months are decisions, not FORMs or estimates.
         _validate_resourcing({"roster": roster}, where, errors)
+    non_personnel = value.get("non_personnel")
+    if non_personnel is not None:
+        costed = costed or bool(non_personnel)
+        # Itemized lines are concrete source-model facts, not FORMs.
+        _validate_non_personnel(non_personnel, where, errors)
+    if (
+        value.get("non_personnel_usd_per_year") is not None
+        and isinstance(non_personnel, list)
+        and non_personnel
+    ):
+        _add_error(
+            errors,
+            "kind_form_invalid",
+            f"{where} cannot mix 'non_personnel_usd_per_year' with "
+            "itemized 'non_personnel'",
+        )
     if not costed:
         _add_error(
             errors,

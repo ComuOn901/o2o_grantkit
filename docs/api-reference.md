@@ -93,7 +93,13 @@ A `FunderPack` exposes `id`, `name`, `program`, `locale`, `accepts_markdown`,
 ## Budget model
 
 ```python
-from grantkit.menu import load_portfolio, run_gates, compile_selection
+from grantkit.menu import (
+    compile_combined,
+    compile_selection,
+    load_portfolio,
+    run_combined_gates,
+    run_gates,
+)
 
 portfolio = load_portfolio("org-portfolio")     # menu + rates + selections
 findings = run_gates(portfolio)                 # list[CheckItem]
@@ -101,6 +107,10 @@ selection = portfolio.get_selection("oaif-2026")
 cost = compile_selection(selection, portfolio)  # SelectionCost
 cost.total_usd, cost.fit
 cost.to_dict()
+
+scenario_ids = ["funder-a", "funder-b"]
+scenario_findings = run_combined_gates(portfolio, scenario_ids)
+combined = compile_combined(portfolio, scenario_ids)  # CombinedCost
 ```
 
 `run_gates(portfolio, selection_id=None, pack=None)` scopes the
@@ -112,6 +122,12 @@ item, role, or unit raises `KeyError`; arithmetic outside the finite float
 range is reported by `run_gates` as `budget_non_finite`. See the
 [budget model](budget-model.md) and the
 [rates contract](rates-contract.md).
+
+`run_combined_gates` scopes the portfolio to the named selections and treats
+all of them as live for the scenario. `compile_combined` returns the funding
+stacks, org-base gap ledger, category totals, base-once staffing, and combined
+revenue; callers can carry the separate findings alongside its `to_dict()`
+output as the CLI does.
 
 ## Retained building blocks
 

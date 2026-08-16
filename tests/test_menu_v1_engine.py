@@ -420,6 +420,40 @@ def test_explicit_resourcing_deep_merges_role_and_unit_leaves():
     assert resolved.resourcing.overhead_included is True
 
 
+def test_non_personnel_override_replaces_the_alternative_representation():
+    kind = _service_kind()
+    kind["resourcing"]["non_personnel_usd_per_year"] = 1200
+    resolved = resolve_item(
+        {
+            "id": "itemized-override",
+            "kind": "service",
+            "resourcing": {
+                "non_personnel": [{"label": "Cloud", "usd_total": 500}]
+            },
+        },
+        {"service": kind},
+    )
+    assert resolved.resourcing.non_personnel_usd_per_year is None
+    assert resolved.resourcing.non_personnel[0].label == "Cloud"
+
+    kind["resourcing"].pop("non_personnel_usd_per_year")
+    kind["resourcing"]["non_personnel"] = [
+        {"label": "Corpus", "usd_total": 900}
+    ]
+    legacy = resolve_item(
+        {
+            "id": "legacy-override",
+            "kind": "service",
+            "resourcing": {"non_personnel_usd_per_year": 2400},
+        },
+        {"service": kind},
+    )
+    assert legacy.resourcing.non_personnel == []
+    assert legacy.resourcing.non_personnel_usd_per_year == pytest.approx(
+        2400.0
+    )
+
+
 def test_explicit_dependencies_are_stably_unioned_with_kind_dependencies():
     resolved = resolve_item(
         {
@@ -831,7 +865,109 @@ def test_roster_org_base_arithmetic_and_unscaled_base_fte():
     }
 
 
-def test_roster_overhead_included_excludes_labor_and_non_personnel():
+def test_ramped_roster_entries_sum_exact_seat_months():
+    org = _item(
+        "org",
+        item_type="org-base",
+        duration=24,
+        resourcing={
+            "roster": [
+                {"role": "Lead", "fte": 0.5, "months": 6},
+                {"role": "Lead", "fte": 1.25, "months": 18},
+                {"role": "Lead", "fte": 0.25},
+            ]
+        },
+    )
+    portfolio = _portfolio(
+        _menu([org]),
+        _selection([], org_base={"item": "org", "fraction": 0.5}),
+    )
+    resolved = resolve_item(portfolio.menu.items[0], portfolio.menu.kinds)
+    item = item_cost(resolved, portfolio.rates, portfolio.menu.unit_costs)
+    cost = selection_cost(portfolio.selections[0], portfolio)
+
+    # 0.5*6 + 1.25*18 + 0.25*24 = exactly 31.5 seat-months.
+    assert item.labor_by_role["Lead"] == {
+        "fte_months": pytest.approx(31.5),
+        "usd": pytest.approx(315000.0),
+    }
+    assert item.to_dict()["roster_by_role"]["Lead"] == {
+        "fte": pytest.approx(2.0),
+        "months": pytest.approx(31.5),
+        "usd": pytest.approx(315000.0),
+    }
+    assert cost.personnel["Lead"]["fte_months"] == pytest.approx(15.75)
+    assert [period["base_fte_by_role"]["Lead"] for period in cost.periods] == [
+        pytest.approx(1.75),
+        pytest.approx(0.875),
+    ]
+
+
+def test_itemized_non_personnel_total_and_annual_costs():
+    org = _item(
+        "org",
+        item_type="org-base",
+        duration=18,
+        resourcing={
+            "non_personnel": [
+                {
+                    "label": "Corpus acquisition",
+                    "usd_total": 30000,
+                    "basis": "configured",
+                    "source": "source-total",
+                },
+                {
+                    "label": "Cloud",
+                    "usd_per_year": 24000,
+                    "basis": "assumed",
+                    "source": "source-run-rate",
+                },
+            ]
+        },
+    )
+    portfolio = _portfolio(
+        _menu([org], overhead=0.1),
+        _selection([], org_base={"item": "org", "fraction": 0.25}),
+    )
+    resolved = resolve_item(portfolio.menu.items[0], portfolio.menu.kinds)
+    item = item_cost(resolved, portfolio.rates, portfolio.menu.unit_costs)
+    cost = selection_cost(portfolio.selections[0], portfolio)
+
+    assert item.non_personnel_usd == pytest.approx(66000.0)
+    assert item.contract_usd == pytest.approx(66000.0)
+    assert item.to_dict()["non_personnel"] == [
+        {
+            "label": "Corpus acquisition",
+            "usd": pytest.approx(30000.0),
+            "basis": "configured",
+            "source": "source-total",
+        },
+        {
+            "label": "Cloud",
+            "usd": pytest.approx(36000.0),
+            "basis": "assumed",
+            "source": "source-run-rate",
+        },
+    ]
+    assert cost.org_base_usd == pytest.approx(16500.0)
+    assert cost.overhead_usd == pytest.approx(1650.0)
+    assert cost.to_dict()["org_base"]["non_personnel"] == [
+        {
+            "label": "Corpus acquisition",
+            "usd": pytest.approx(7500.0),
+            "basis": "configured",
+            "source": "source-total",
+        },
+        {
+            "label": "Cloud",
+            "usd": pytest.approx(9000.0),
+            "basis": "assumed",
+            "source": "source-run-rate",
+        },
+    ]
+
+
+def test_roster_overhead_included_retains_legacy_whole_block_semantics():
     org = _item(
         "org",
         item_type="org-base",

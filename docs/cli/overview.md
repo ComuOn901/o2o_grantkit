@@ -71,7 +71,7 @@ countdown. `--json` writes (and prints) `status.json` — see
 ## budget
 
 ```bash
-grantkit budget [--selection ID] [--check] [--json] [--output FILE] [--narrative] [PATH]
+grantkit budget [--selection ID | --combine ID1,ID2] [--check] [--json] [--output FILE] [--narrative] [PATH]
 ```
 
 Compiles a portfolio selection — a proposal expressed as fractions of a
@@ -83,10 +83,16 @@ project bound via `budget_model:`. See the
 [budget model](../budget-model.md) and
 [rates contract](../rates-contract.md).
 
+`--combine` rolls up two or more packages into one funding-coverage view.
+It stacks per-funder item and org-base shares, shows the unclaimed core-ops
+gap, counts a shared org-base roster once, and runs C2 as though every chosen
+package were live. It requires structured JSON and/or a Markdown output file;
+single-selection output is unchanged.
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success (for `check`: no errors, or no warnings under `--strict`). |
-| `1` | `check` found errors (or warnings under `--strict`); `budget`/`budget --check` found gate errors. |
+| `0` | Success (for `check`: no errors, or no warnings under `--strict`). A computable `budget --combine` scenario also succeeds when its only errors are embedded C2 over-allocation findings. |
+| `1` | `check` found errors (or warnings under `--strict`); `budget --check` found errors; or budget compilation found a blocking structural error. |
 | `2` | Usage error — e.g. no `grant.yaml`, unknown funder pack, missing format dependency, unreadable portfolio or unknown selection. |

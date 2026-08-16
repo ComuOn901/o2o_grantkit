@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, MutableMapping, Optional
 
 from . import schema as schema_module
-from .schema import Resourcing, RosterLine
+from .schema import NonPersonnelLine, Resourcing, RosterLine
 
 EstimateMap = dict[str, dict[str, Any]]
 
@@ -267,6 +267,25 @@ def _roster_to_dict(entry: Any) -> dict[str, Any]:
     return result
 
 
+def _non_personnel_to_dict(entry: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "label": str(_field(entry, "label", default="")),
+    }
+    usd_total = _field(entry, "usd_total", default=None)
+    usd_per_year = _field(entry, "usd_per_year", default=None)
+    if usd_total is not None:
+        result["usd_total"] = float(usd_total)
+    elif usd_per_year is not None:
+        result["usd_per_year"] = float(usd_per_year)
+    basis = _field(entry, "basis", default=None)
+    if basis is not None:
+        result["basis"] = str(basis)
+    source = _field(entry, "source", default=None)
+    if source is not None:
+        result["source"] = str(source)
+    return result
+
+
 def _resourcing_to_dict(resourcing: Any) -> dict[str, Any]:
     result: dict[str, Any] = {
         "fte_months": _sorted_mapping(
@@ -289,6 +308,10 @@ def _resourcing_to_dict(resourcing: Any) -> dict[str, Any]:
         "non_personnel_usd_per_year",
         default=None,
     )
+    non_personnel = _field(resourcing, "non_personnel", default=[])
+    result["non_personnel"] = [
+        _non_personnel_to_dict(entry) for entry in non_personnel
+    ]
     return result
 
 
@@ -518,6 +541,48 @@ def _resolve_roster(value: Any, path: str) -> list[RosterLine]:
     return result
 
 
+def _resolve_non_personnel(value: Any, path: str) -> list[NonPersonnelLine]:
+    if not isinstance(value, list):
+        return []
+    result: list[NonPersonnelLine] = []
+    for index, entry in enumerate(value):
+        entry_path = _join_path(path, index)
+        usd_total_value = _field(entry, "usd_total", default=None)
+        usd_per_year_value = _field(entry, "usd_per_year", default=None)
+        result.append(
+            NonPersonnelLine(
+                label=str(_field(entry, "label", default="")),
+                usd_total=(
+                    None
+                    if usd_total_value is None
+                    else _finite_float(
+                        usd_total_value,
+                        where=_join_path(entry_path, "usd_total"),
+                    )
+                ),
+                usd_per_year=(
+                    None
+                    if usd_per_year_value is None
+                    else _finite_float(
+                        usd_per_year_value,
+                        where=_join_path(entry_path, "usd_per_year"),
+                    )
+                ),
+                basis=(
+                    None
+                    if _field(entry, "basis", default=None) is None
+                    else str(_field(entry, "basis"))
+                ),
+                source=(
+                    None
+                    if _field(entry, "source", default=None) is None
+                    else str(_field(entry, "source"))
+                ),
+            )
+        )
+    return result
+
+
 def _resolve_resourcing(
     value: Any,
     params: Mapping[str, Any],
@@ -534,6 +599,7 @@ def _resolve_resourcing(
         "overhead_included": False,
         "roster": [],
         "non_personnel_usd_per_year": None,
+        "non_personnel": [],
     }
     for name in _RESOURCE_MAP_FIELDS:
         if name in raw_value:
@@ -562,6 +628,11 @@ def _resolve_resourcing(
         result["roster"] = _resolve_roster(
             raw_value["roster"], _join_path(path, "roster")
         )
+    if "non_personnel" in raw_value:
+        result["non_personnel"] = _resolve_non_personnel(
+            raw_value["non_personnel"],
+            _join_path(path, "non_personnel"),
+        )
     return result
 
 
@@ -576,9 +647,20 @@ def _merge_resourcing(
         if name in override_raw:
             merged.update(override.get(name, {}))
         result[name] = merged
-    for name in (*_RESOURCE_SCALAR_FIELDS, "overhead_included", "roster"):
+    for name in (
+        *_RESOURCE_SCALAR_FIELDS,
+        "overhead_included",
+        "roster",
+        "non_personnel",
+    ):
         if name in override_raw:
             result[name] = override.get(name)
+    # The legacy lump and the itemized list are alternative representations.
+    # A concrete override of either replaces an inherited value of the other.
+    if "non_personnel" in override_raw:
+        result["non_personnel_usd_per_year"] = None
+    if "non_personnel_usd_per_year" in override_raw:
+        result["non_personnel"] = []
     return result
 
 
@@ -592,6 +674,7 @@ def _build_resourcing(values: Mapping[str, Any]) -> Resourcing:
         overhead_included=bool(values.get("overhead_included", False)),
         roster=list(values.get("roster", [])),
         non_personnel_usd_per_year=values.get("non_personnel_usd_per_year"),
+        non_personnel=list(values.get("non_personnel", [])),
     )
 
 

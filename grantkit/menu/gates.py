@@ -29,6 +29,7 @@ selection id, so table output shows which proposal each finding belongs to.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -138,6 +139,72 @@ def run_gates(
     return items
 
 
+def run_combined_gates(
+    portfolio: Portfolio,
+    selection_ids: list[str],
+    pack: Optional[FunderPack] = None,
+) -> list[CheckItem]:
+    """Run gates for one explicit multi-selection planning scenario.
+
+    Only the named selections participate, and every one is treated as
+    ``live`` regardless of its declared status.  This makes the C2 ledger
+    answer the scenario the caller actually selected without mutating the
+    loaded portfolio or the underlying proposal files.
+    """
+    if len(selection_ids) < 2:
+        return [
+            CheckItem(
+                level="error",
+                rule="combined_selection_count",
+                message="A combined budget requires at least two selections.",
+            )
+        ]
+    if len(set(selection_ids)) != len(selection_ids):
+        return [
+            CheckItem(
+                level="error",
+                rule="combined_selection_duplicate",
+                message="A combined budget cannot repeat a selection id.",
+            )
+        ]
+
+    available_ids = {selection.id for selection in portfolio.selections}
+    unknown = sorted(set(selection_ids) - available_ids)
+    if unknown:
+        available = ", ".join(sorted(available_ids)) or "(none)"
+        return [
+            CheckItem(
+                level="error",
+                rule="unknown_selection",
+                message=(
+                    f"Selection '{selection_id}' was not found in the "
+                    f"portfolio (available: {available})."
+                ),
+            )
+            for selection_id in unknown
+        ]
+
+    requested = set(selection_ids)
+    selected_pairs = [
+        (data, selection)
+        for data, selection in zip(
+            portfolio.selections_data, portfolio.selections
+        )
+        if selection.id in requested
+    ]
+    selected_pairs.sort(key=lambda pair: pair[1].id)
+    selected_data = [data for data, _ in selected_pairs]
+    selected = [
+        replace(selection, status="live") for _, selection in selected_pairs
+    ]
+    scenario = replace(
+        portfolio,
+        selections_data=selected_data,
+        selections=selected,
+    )
+    return run_gates(scenario, pack=pack)
+
+
 # -- 1. schema ----------------------------------------------------------
 
 
@@ -211,7 +278,7 @@ def _schema_gates(portfolio: Portfolio) -> list[CheckItem]:
 def _validation_rule(message: str, fallback: str) -> str:
     """Use a v1 issue's precise rule without changing legacy strings."""
     if isinstance(message, ValidationIssue):
-        return message.rule
+        return str(message.rule)
     return fallback
 
 
