@@ -408,6 +408,7 @@ def test_export_model_has_normalized_top_level_contract(
         "menu": "grantkit-menu/v1",
         "provider": "synthetic v1 provider",
         "rates": "grantkit-rates/v1",
+        "scenario": "v1-tests",
     }
     assert payload["currency"] == "USD"
     assert payload["overheads"]["fiscal_sponsorship_rate"] == 0.1

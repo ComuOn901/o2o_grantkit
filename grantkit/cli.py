@@ -33,10 +33,21 @@ from .core.project import GrantProject, GrantProjectError
 from .core.review import build_review
 from .core.scaffold import ScaffoldError, init_project
 from .core.status import build_status, days_until_deadline, write_status
-from .menu import run_gates, selection_cost
+from .menu import (
+    compile_combined,
+    run_combined_gates,
+    run_gates,
+    selection_cost,
+)
 from .menu.loader import Portfolio, PortfolioError, load_portfolio
 from .menu.model import model_bundle
-from .menu.render import budget_json, budget_markdown, print_budget
+from .menu.render import (
+    budget_json,
+    budget_markdown,
+    combined_budget_json,
+    combined_budget_markdown,
+    print_budget,
+)
 from .menu.schema import Selection
 from .packs import FunderPack
 
@@ -325,6 +336,21 @@ def _print_status(project: GrantProject) -> None:
 # -- budget -------------------------------------------------------------
 
 
+def _parse_combine_ids(value: str) -> list[str]:
+    """Parse the comma-separated combine option into canonical ids."""
+    parts = value.split(",")
+    ids = [part.strip() for part in parts]
+    if any(not selection_id for selection_id in ids):
+        raise click.UsageError(
+            "--combine must be a comma-separated list of selection ids"
+        )
+    if len(ids) < 2:
+        raise click.UsageError("--combine requires at least two selections")
+    if len(set(ids)) != len(ids):
+        raise click.UsageError("--combine cannot repeat a selection id")
+    return sorted(ids)
+
+
 @main.command()
 @click.option(
     "--selection",
@@ -355,6 +381,15 @@ def _print_status(project: GrantProject) -> None:
     "all_selections",
     is_flag=True,
     help="Compile every selection; requires --json.",
+)
+@click.option(
+    "--combine",
+    default=None,
+    metavar="ID1,ID2[,...]",
+    help=(
+        "Roll up two or more selections as one live funding scenario; "
+        "requires --json and/or --output."
+    ),
 )
 @click.option(
     "--export-model",
@@ -390,6 +425,7 @@ def budget(
     check_only: bool,
     as_json: bool,
     all_selections: bool,
+    combine: Optional[str],
     export_model: Optional[Path],
     output: Optional[Path],
     narrative: bool,
@@ -401,6 +437,7 @@ def budget(
     PATH is a portfolio directory (menu.yaml + rates.yaml + selections/)
     or a grant project whose grant.yaml binds one via a budget_model block.
     """
+    combine_ids = _parse_combine_ids(combine) if combine is not None else None
     if check_only and output is not None:
         raise click.UsageError("--output cannot be used with --check")
     if check_only and narrative:
@@ -421,6 +458,23 @@ def budget(
         raise click.UsageError("--output cannot be used with --all")
     if all_selections and narrative:
         raise click.UsageError("--narrative cannot be used with --all")
+    if combine_ids is not None and selection_id is not None:
+        raise click.UsageError("--selection cannot be used with --combine")
+    if combine_ids is not None and all_selections:
+        raise click.UsageError("--all cannot be used with --combine")
+    if combine_ids is not None and check_only:
+        raise click.UsageError("--check cannot be used with --combine")
+    if combine_ids is not None and narrative:
+        raise click.UsageError("--narrative cannot be used with --combine")
+    if combine_ids is not None and show_periods:
+        raise click.UsageError("--periods cannot be used with --combine")
+    if (
+        combine_ids is not None
+        and not as_json
+        and output is None
+        and export_model is None
+    ):
+        raise click.UsageError("--combine requires --json and/or --output")
     if export_model is not None:
         conflicts = [
             (selection_id is not None, "--selection"),
@@ -430,6 +484,7 @@ def budget(
             (output is not None, "--output"),
             (narrative, "--narrative"),
             (show_periods, "--periods"),
+            (combine_ids is not None, "--combine"),
         ]
         for active, option in conflicts:
             if active:
@@ -441,7 +496,9 @@ def budget(
         path,
         selection_id,
         resolve_bound_selection=not (
-            all_selections or export_model is not None
+            all_selections
+            or combine_ids is not None
+            or export_model is not None
         ),
     )
 
@@ -478,6 +535,66 @@ def budget(
                 f"Wrote model bundle to {export_model}", style="green"
             )
         )
+        return
+
+    if combine_ids is not None:
+        for combined_id in combine_ids:
+            _resolve_selection(portfolio, combined_id)
+        result = CheckResult(items=run_combined_gates(portfolio, combine_ids))
+        blocking_errors = [
+            item
+            for item in result.items
+            if item.level == "error"
+            and item.rule != "cofunding_over_allocated"
+        ]
+        if blocking_errors:
+            if as_json:
+                sys.stdout.write(
+                    json.dumps(
+                        result.to_dict(),
+                        indent=2,
+                        sort_keys=True,
+                        allow_nan=False,
+                    )
+                    + "\n"
+                )
+            else:
+                _print_checks(result)
+            err_console.print(
+                "[red]Cannot compile: fix the reported structural errors "
+                "(or run budget --check).[/red]"
+            )
+            raise SystemExit(1)
+
+        combined = compile_combined(portfolio, combine_ids)
+        if output is not None:
+            markdown = combined_budget_markdown(portfolio, combined, result)
+            try:
+                Path(output).write_text(markdown, encoding="utf-8")
+            except OSError as exc:
+                err_console.print(
+                    _terminal_text(
+                        f"Could not write budget document to {output}: {exc}",
+                        style="red",
+                    )
+                )
+                raise SystemExit(2)
+            destination = err_console if as_json else console
+            destination.print(
+                _terminal_text(
+                    f"Wrote budget document to {output}", style="green"
+                )
+            )
+        if as_json:
+            sys.stdout.write(
+                json.dumps(
+                    combined_budget_json(portfolio, combined, result),
+                    indent=2,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                + "\n"
+            )
         return
 
     if all_selections:

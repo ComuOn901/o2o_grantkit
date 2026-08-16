@@ -17,6 +17,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from ..core.checks import CheckResult
+from .combine import CombinedCost
 from .engine import SelectedItemCost, SelectionCost
 from .loader import Portfolio
 from .money import format_money, format_percent
@@ -52,7 +54,7 @@ def _benchmark_text(role: Optional[RoleRate], currency: str) -> str:
     source = benchmark.source
     if not source:
         return ""
-    text = source
+    text = str(source)
     if benchmark.percentile is not None:
         text += f", p{benchmark.percentile:g}"
     if benchmark.value_usd is not None:
@@ -453,6 +455,27 @@ def budget_json(
     }
 
 
+def combined_budget_json(
+    portfolio: Portfolio,
+    cost: CombinedCost,
+    gates: CheckResult,
+) -> dict[str, Any]:
+    """The structured multi-selection rollup for ``budget --combine``."""
+    rates = portfolio.rates
+    menu = portfolio.menu
+    return {
+        "generated_from": {
+            "menu_schema": menu.schema,
+            "currency": menu.currency,
+            "rates_provider": rates.provider,
+            "rates_generated": rates.generated,
+            "rates_scenario": rates.scenario,
+        },
+        **cost.to_dict(),
+        "gates": gates.to_dict(),
+    }
+
+
 # -- markdown -----------------------------------------------------------
 
 
@@ -554,6 +577,226 @@ def budget_markdown(
 
     if narrative:
         lines += [budget_narrative(portfolio, selection, cost), ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def combined_budget_markdown(
+    portfolio: Portfolio,
+    cost: CombinedCost,
+    gates: CheckResult,
+) -> str:
+    """Render a deterministic Markdown funding rollup."""
+    currency = cost.currency
+    lines = [
+        "# Combined budget",
+        "",
+        "- Packages: " + _markdown_inline(", ".join(cost.selection_ids)),
+        "- Scenario: all selected packages are treated as live for gates",
+        "",
+        _markdown_inline(generated_from(portfolio)),
+        "",
+        "## Funding coverage",
+        "",
+    ]
+    if not cost.org_bases:
+        lines += ["No selected package claims an org base.", ""]
+    for base in cost.org_bases:
+        coverage = format_percent(float(base["coverage_fraction"]))
+        lines += [
+            f"### {_markdown_inline(str(base['title']))}",
+            "",
+            f"Core-ops coverage: **{coverage}**.",
+            "",
+            "| Source | Selection | Fraction | Pre-fee share |",
+            "|---|---|---:|---:|",
+        ]
+        for share in base["shares"]:
+            selection_id = share["selection_id"] or "—"
+            coverage_cells = (
+                str(share["funder"]),
+                str(selection_id),
+                format_percent(float(share["fraction"])),
+                format_money(float(share["funded_usd"]), currency),
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in coverage_cells)
+                + " |"
+            )
+        if base["over_allocated"]:
+            lines += [
+                "",
+                "**OVER-ALLOCATED:** this org base exceeds 100% coverage; "
+                "see the C2 gate below.",
+            ]
+        lines.append("")
+
+    lines += [
+        "## Item funding stacks",
+        "",
+        "| Item | Type | Funding stack | Σ fraction | Funded share | Gate |",
+        "|---|---|---|---:|---:|---|",
+    ]
+    for item in cost.items:
+        stack = "; ".join(
+            f"{share['funder']} ({share['selection_id']}): "
+            f"{format_percent(float(share['fraction']))}"
+            for share in item["shares"]
+        )
+        item_cells = (
+            str(item["title"]),
+            str(item["type"]),
+            stack,
+            format_percent(float(item["fraction"])),
+            format_money(float(item["funded_usd"]), currency),
+            "OVER-ALLOCATED" if item["over_allocated"] else "—",
+        )
+        lines.append(
+            "| "
+            + " | ".join(_markdown_cell(cell) for cell in item_cells)
+            + " |"
+        )
+    lines.append("")
+
+    if cost.personnel:
+        lines += [
+            "## Funded personnel",
+            "",
+            "| Role | Funded FTE-months | Loaded annual | Funded amount |",
+            "|---|---:|---:|---:|",
+        ]
+        for role in sorted(cost.personnel):
+            spend = cost.personnel[role]
+            personnel_cells = (
+                role,
+                f"{spend['fte_months']:g}",
+                format_money(spend["loaded_usd"], currency),
+                format_money(spend["usd"], currency),
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in personnel_cells)
+                + " |"
+            )
+        lines.append("")
+
+    labels = {
+        "labor_usd": "Labor",
+        "units_usd": "Units",
+        "contract_usd": "Contracts",
+        "flat_usd": "Flat amounts",
+        "recurring_usd": "Recurring (prorated)",
+        "org_base_usd": "Org base",
+        "overhead_usd": "Overhead",
+    }
+    lines += [
+        "## Combined totals",
+        "",
+        "| Category | Amount |",
+        "|---|---:|",
+    ]
+    for key, label in labels.items():
+        amount = cost.categories[key]
+        if amount:
+            lines.append(
+                f"| {_markdown_cell(label)} | "
+                f"{_markdown_cell(format_money(amount, currency))} |"
+            )
+    lines += [
+        "| **Total** | **"
+        + _markdown_cell(format_money(cost.total_usd, currency))
+        + "** |",
+        "",
+        "## Combined staffing",
+        "",
+        "Shared org-base rosters are counted once; incremental FTE is "
+        "summed across packages.",
+        "",
+        "| Period | Role | Incremental FTE | Base FTE | Total FTE |",
+        "|---|---|---:|---:|---:|",
+    ]
+    staffing_rows = 0
+    for period in cost.periods:
+        roles = sorted(period["total_fte_by_role"])
+        for role in roles:
+            staffing_rows += 1
+            staffing_cells = (
+                str(period["label"]),
+                role,
+                f"{period['fte_by_role'].get(role, 0.0):g}",
+                f"{period['base_fte_by_role'].get(role, 0.0):g}",
+                f"{period['total_fte_by_role'][role]:g}",
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in staffing_cells)
+                + " |"
+            )
+    if not staffing_rows:
+        lines.append("| — | No scheduled personnel | — | — | — |")
+    lines.append("")
+
+    if cost.revenue["by_stream"]:
+        lines += [
+            "## Combined revenue",
+            "",
+            "Enabled revenue for a shared stream is counted once; "
+            "attributed revenue stacks with funded fractions.",
+            "",
+            "| Stream | Item | Enabled | Attributed |",
+            "|---|---|---:|---:|",
+        ]
+        for stream in cost.revenue["by_stream"]:
+            revenue_cells = (
+                str(stream["stream"]),
+                str(stream["item_id"]),
+                format_money(stream["enabled_usd"], currency),
+                format_money(stream["attributed_usd"], currency),
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in revenue_cells)
+                + " |"
+            )
+        lines += [
+            "| **Total** |  | **"
+            + _markdown_cell(
+                format_money(cost.revenue["enabled_total"], currency)
+            )
+            + "** | **"
+            + _markdown_cell(
+                format_money(cost.revenue["attributed_total"], currency)
+            )
+            + "** |",
+            "",
+        ]
+
+    lines += [
+        "## Gates",
+        "",
+        f"{gates.errors} error(s), {gates.warnings} warning(s).",
+        "",
+    ]
+    if gates.items:
+        lines += [
+            "| Level | Rule | Selection | Finding |",
+            "|---|---|---|---|",
+        ]
+        for finding in gates.items:
+            gate_cells = (
+                finding.level,
+                finding.rule,
+                finding.section or "—",
+                finding.message,
+            )
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in gate_cells)
+                + " |"
+            )
+        lines.append("")
+    else:
+        lines += ["No findings.", ""]
     return "\n".join(lines).rstrip() + "\n"
 
 

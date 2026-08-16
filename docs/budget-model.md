@@ -572,6 +572,65 @@ noise at the boundary quiet. The message names the role, period, demand,
 capacity, and contributing selections. Capacity is an advisory planning
 constraint, not a funder rule, so it never blocks compilation.
 
+## Combining packages
+
+Several proposal packages can be viewed as one funding scenario without
+rewriting any of their honest asks:
+
+```bash
+grantkit budget org-portfolio \
+  --combine ballmer-l1,oaif-2026,pbif-2026,state-contract-az \
+  --json
+grantkit budget org-portfolio \
+  --combine ballmer-l1,oaif-2026 \
+  --output combined.md
+```
+
+`--combine` requires at least two distinct selection ids and either `--json`,
+`--output`, or both. The ids are sorted before compilation, so input order
+does not affect the bytes. It does not accept `--selection`, `--all`,
+`--check`, `--export-model`, `--narrative`, or `--periods`; phasing and
+staffing are already part of every combined artifact.
+
+The rollup stacks each funder's fraction and funded dollars per shared menu
+item, then reports the sum. This is the C2 ledger read positively: a sum of
+75% says the selected packages fund 75% of that item. A sum above 100% is
+still the existing `cofunding_over_allocated` error and remains visible in
+the combined gates. The compiler does not lower, rebalance, or hide either
+ask.
+
+Each referenced `org-base` item also gets a funding-coverage ledger. The
+selected fractions are funder segments, and `max(0, 1 - sum(fractions))` is
+an explicit **Unclaimed** gap segment. That gap is the honest expectation
+that other funders cover the rest, not a zero-cost assumption. At exactly
+100% the explicit gap remains present at 0%. At more than 100%, the gap is
+zero and C2 reports the over-allocation.
+
+Coverage uses the same item ledger as C2, including an `org-base` menu item
+claimed as an ordinary selection line. Each JSON share retains
+`claim_kind: item | org_base | gap`, so consumers can show how the claim was
+declared without inventing a gap or splitting one item into two ledgers.
+
+Combined category and period costs sum the selected asks. Funded personnel
+likewise sums each selection's fraction-weighted attribution. Operational
+staffing has different semantics: incremental FTE sums, but a roster on the
+same org-base item is counted once no matter how many funders claim shares
+of it or whether a share uses an ordinary item line or `org_base`. Different
+org-base items remain different organizations and add.
+
+Revenue is grouped by shared item, stream, schedule, and assumptions.
+Enabled revenue for the identical shared stream is counted once (the maximum
+in each period); attributed revenue stacks by funded fraction. The JSON
+includes each funder's stream share as well as combined period and lifetime
+totals.
+
+For this scenario every selected proposal is treated as live, including a
+proposal whose file says `draft`; unselected proposals do not participate.
+Computable C2 errors are embedded in the JSON/Markdown gates and do not
+suppress the rollup, because resolving that funding decision is the point of
+the view. Structural errors still block compilation. Single-selection
+compilation is unchanged and remains the funder-only view.
+
 ## Binding a grant project
 
 A grant project may bind itself to one selection in `grant.yaml`:
@@ -604,6 +663,8 @@ grantkit budget [PATH]
                      --check; required to compile a multi-selection
                      portfolio unless PATH binds one
   --all              compile every selection (requires --json)
+  --combine IDS      combine two or more comma-separated selection ids;
+                     requires --json and/or --output
   --check            run the gates only; exit 1 on findings that are
                      errors, 2 on selection/configuration/loading failures
   --json             emit the full structured compilation as JSON
@@ -621,8 +682,10 @@ Warnings do not make `budget --check` fail; `--strict` belongs to the proposal
 `check` verb and is not a budget option. `--output` and `--narrative` cannot be
 combined with `--check`. With `--json`, `--narrative` requires `--output`, so
 the JSON stays alone on stdout while the narrative goes to the markdown file.
-If compilation is blocked by gate errors, `--json` emits the structured gate
-findings instead of a compiled budget.
+If single-selection/`--all` compilation, or a combined scenario with a
+structural error, is blocked by gates, `--json` emits the structured findings
+instead of a compiled budget. A computable combined C2 conflict stays inside
+the rollup as described in [Combining packages](#combining-packages).
 
 `--all --json` is the cross-implementation conformance output:
 
@@ -633,6 +696,11 @@ findings instead of a compiled budget.
 Each value is the same full compilation returned by a single-selection JSON
 run. Selection ids are sorted. `--all` does not need or accept a selected id,
 and it can compile an empty portfolio to an empty `selections` mapping.
+
+`--combine --json` emits `grantkit-combined-budget/v1`: canonical selection
+ids, per-funder totals, item funding stacks, org-base coverage and gap
+segments, combined categories, base-once staffing, revenue, and the scenario
+gate result. Mapping keys and all id-addressed arrays are deterministic.
 
 The default output is rich tables: header with a generated-from
 reproducibility line, selected items, personnel (with a benchmark
@@ -660,7 +728,7 @@ separate compiler or configurator:
 
 ```text
 schema: grantkit-model/v1
-generated_from: menu/rates schemas, provider, generated date
+generated_from: menu/rates schemas, provider, generated date, rates scenario
 currency, overheads
 unit_costs: central values plus estimate metadata
 kinds, kind_presets
