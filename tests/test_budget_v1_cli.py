@@ -254,6 +254,47 @@ def test_all_json_has_one_compilation_per_selection(make_portfolio):
         assert "estimates" in compilation
 
 
+def test_compiled_json_carries_weighted_org_base_other_costs(make_portfolio):
+    menu = _v1_menu()
+    resourcing = menu["items"][2]["resourcing"]
+    del resourcing["non_personnel_usd_per_year"]
+    resourcing["non_personnel"] = [
+        {
+            "label": "Cloud",
+            "usd_per_year": 1200,
+            "basis": "configured",
+            "source": "synthetic cloud source",
+        },
+        {
+            "label": "Practitioner review",
+            "usd_total": 900,
+            "basis": "assumed",
+        },
+    ]
+    result = _invoke(
+        "--selection",
+        "sel-alpha",
+        "--json",
+        _v1_root(make_portfolio, menu=menu),
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["org_base"]["non_personnel"] == [
+        {
+            "label": "Cloud",
+            "usd": 120.0,
+            "basis": "configured",
+            "source": "synthetic cloud source",
+        },
+        {
+            "label": "Practitioner review",
+            "usd": 90.0,
+            "basis": "assumed",
+            "source": None,
+        },
+    ]
+
+
 def test_all_json_selection_keys_are_sorted_in_bytes(make_portfolio):
     result = _invoke("--all", "--json", _v1_root(make_portfolio))
     assert result.exit_code == 0
@@ -422,6 +463,49 @@ def test_export_model_items_contain_raw_and_resolved_forms(
     }
     assert item["resolved"]["resourcing"]["units"] == {"token": 6.0}
     assert item["resolved"]["revenue"][0]["price_usd"] == 2.0
+
+
+def test_export_model_preserves_itemized_non_personnel_inputs(
+    make_portfolio, tmp_path
+):
+    menu = _v1_menu()
+    resourcing = menu["items"][2]["resourcing"]
+    del resourcing["non_personnel_usd_per_year"]
+    resourcing["non_personnel"] = [
+        {
+            "label": "Cloud",
+            "usd_per_year": 1200,
+            "basis": "assumed",
+            "source": "synthetic source",
+        },
+        {"label": "Corpus", "usd_total": 500},
+    ]
+    output = tmp_path / "model.json"
+    result = _invoke(
+        "--export-model",
+        output,
+        _v1_root(make_portfolio, menu=menu),
+    )
+    assert result.exit_code == 0, result.output
+    item = json.loads(output.read_text(encoding="utf-8"))["items"][1]
+    assert item["raw"]["resourcing"]["non_personnel"] == [
+        {
+            "label": "Cloud",
+            "usd_per_year": 1200,
+            "basis": "assumed",
+            "source": "synthetic source",
+        },
+        {"label": "Corpus", "usd_total": 500},
+    ]
+    assert item["resolved"]["resourcing"]["non_personnel"] == [
+        {
+            "label": "Cloud",
+            "usd_per_year": 1200.0,
+            "basis": "assumed",
+            "source": "synthetic source",
+        },
+        {"label": "Corpus", "usd_total": 500.0},
+    ]
 
 
 def test_export_model_sorts_role_and_selection_records(
@@ -775,6 +859,51 @@ def test_role_capacity_counts_roster_base_unscaled_by_funder_share(
         item for item in _rules(root) if item.rule == "role_over_allocated"
     )
     assert "0.75 FTE versus capacity 0.7 FTE" in hit.message
+
+
+def test_role_capacity_sums_multiple_roster_entries_for_one_role(
+    make_portfolio,
+):
+    menu = _v1_menu()
+    menu["items"][2]["resourcing"]["roster"] = [
+        {"role": "Analyst", "fte": 0.75, "months": 12},
+        {"role": "Analyst", "fte": 0.5, "months": 12},
+    ]
+    selections = [
+        _selection(
+            "sel-base",
+            "plain-a",
+            fraction=0,
+            status="live",
+            horizon=12,
+            org_base=True,
+        )
+    ]
+    root = _v1_root(
+        make_portfolio,
+        menu=menu,
+        rates=_v1_rates(capacity=1.2),
+        selections=selections,
+    )
+    hit = next(
+        item for item in _rules(root) if item.rule == "role_over_allocated"
+    )
+    assert "1.25 FTE versus capacity 1.2 FTE" in hit.message
+
+
+def test_every_roster_entry_role_must_resolve(make_portfolio):
+    menu = _v1_menu()
+    menu["items"][2]["resourcing"]["roster"].append(
+        {"role": "Missing role", "fte": 0.25, "months": 12}
+    )
+    root = _v1_root(make_portfolio, menu=menu)
+    hits = [
+        item
+        for item in run_gates(load_portfolio(root))
+        if item.rule == "unknown_role"
+    ]
+    assert len(hits) == 1
+    assert "Missing role" in hits[0].message
 
 
 def test_role_capacity_counts_shared_roster_base_once(make_portfolio):

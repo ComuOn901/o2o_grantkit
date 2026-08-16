@@ -103,9 +103,10 @@ contain org overheads**, so the selection-level overhead must not re-apply
 to them. Upstream org models often emit fee-inclusive totals; re-applying
 the fee on top produces a phantom overhead-on-overhead line (a real $99,750
 error on one live view motivated this flag). Ordinary labor and units remain
-overhead-bearing because they are raw costs. Roster-based org bases are the
-documented exception: the flag covers roster labor and non-personnel cost as
-one overhead-inclusive block.
+overhead-bearing because they are raw costs. Roster labor and non-personnel
+lines in a new bottoms-up org base are also raw costs. Such a base omits
+`overhead_included`, so the selection-level fee applies once to its pre-fee
+inputs. Existing fee-inclusive blocks retain the legacy flag contract.
 
 ## Estimate objects
 
@@ -329,7 +330,8 @@ Per item:
 ```
 labor    = sum over roles of fte_months/12 x loaded_usd
 units    = sum over units of count x usd_per_unit
-contract = contract_usd
+other    = sum of duration-costed non_personnel lines
+contract = contract_usd + other
 flat     = amount_usd
 one_time = labor + units + contract + flat   (recurring excluded)
 ```
@@ -416,9 +418,10 @@ uniformly over the window for reporting. An explicit `duration_months: 0` is
 the compatibility exception: the item is instantaneous, and all of its
 one-time cost is assigned to the period containing `start_month`; on an annual
 boundary, that is the period beginning there. Org bases start at month zero. A
-roster entry without its own `months` and annualized non-personnel cost both
-use the zero duration and therefore contribute zero; recurring cost remains a
-window run rate.
+roster entry without its own `months` and an itemized `usd_per_year`
+non-personnel line both use the zero duration and therefore contribute zero.
+An itemized `usd_total` remains the stated total and is assigned to the
+instantaneous period; recurring cost remains a window run rate.
 
 Scheduled work may extend beyond `window_months`. Those dollars remain in the
 later periods rather than disappearing, and `outside_window_usd` separately
@@ -435,22 +438,63 @@ Each period reports cost by category plus two staffing maps:
   in the period divided by the period's months.
 - `base_fte_by_role` is roster FTE from the selected org base.
 
-### Roster org bases
+### Bottoms-up org bases
 
-An org-base item may be costed from a roster instead of a flat block:
+An org-base item can derive its complete pre-fee cost from a roster and
+itemized non-personnel lines instead of inheriting a published lump:
 
 ```yaml
+duration_months: 36
 resourcing:
   roster:
-    - {role: "Encoding Lead", fte: 1.0, months: 12}
+    - {role: "Encoding Lead", fte: 1.0}            # 36 seat-months
+    - {role: "Encoding Lead", fte: 0.5, months: 24} # 12 seat-months
     - {role: "Operations Manager", fte: 0.5}
-  non_personnel_usd_per_year: 120000
+  non_personnel:
+    - label: "AI seats"
+      usd_per_year: 24000
+      basis: configured
+      source: "floor-bottoms-up.ts:FLOOR-STD"
+    - label: "Corpus acquisition"
+      usd_total: 75000
+      basis: computed
+      source: "floor-bottoms-up.ts:FLOOR-STD"
 ```
 
-Each role must resolve in `rates.yaml`. A line without `months` uses the
-item's duration. Roster labor is `fte * months / 12 * loaded_usd`, and
-non-personnel cost is prorated by duration. Both bear overhead unless
-`overhead_included` is true.
+Roster roles may repeat. Each entry is costed independently as
+`fte * months / 12 * loaded_usd`; a line without `months` uses the item's
+duration. This makes a source model's ramp exact in seat-months instead of
+collapsing it to one inherited personnel total. Period staffing and the
+capacity gate sum every active entry for the role. As in v0.4, roster entries
+start at the beginning of the org-base item.
+
+Every `non_personnel` entry has a non-empty label that is unique within the
+item and exactly one of:
+
+- `usd_total`: the complete amount over the item duration; or
+- `usd_per_year`: an annual rate, multiplied by `duration_months / 12`.
+
+Amounts must be finite and non-negative. Optional `basis` is `computed`,
+`configured`, or `assumed`; optional `source` identifies the source-model
+line. Compiled item JSON reports each duration-costed line as
+`{label, usd, basis, source}`. Compiled selection JSON repeats the lines under
+`org_base.non_personnel`, with `usd` scaled by the selection's org-base
+fraction, so a surface can render the selected share's other-cost table.
+
+Bottoms-up roster labor and non-personnel bear the selection-level fee because
+a fully bottoms-up base does not set `overhead_included`. The flag retains its
+v0.4 meaning for existing fee-inclusive blocks, including roster and
+non-personnel components. The legacy `non_personnel_usd_per_year` lump remains
+readable but cannot be mixed with the itemized list. Flat `amount_usd` blocks
+also remain compatible. If `amount_usd` and a roster appear together, their
+costs are additive exactly as in v0.4; the roster is never informational.
+
+Reconciliation is a checked property, not a cost input. Compile the roster
+and itemized lines, compare the resulting item `one_time_usd` with the source
+model's published **pre-fee** total, and report the residual. Never absorb a
+residual by changing a rate, adding a plug line, or copying the target into
+`amount_usd`. Once the pre-fee base reconciles, the selection's fee emerges
+from the normal overhead formula.
 
 The selection's org-base fraction scales the dollars attributed to that
 funder. It does not scale `base_fte_by_role`: the org and its people exist in

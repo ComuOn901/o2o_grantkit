@@ -325,6 +325,30 @@ def test_v1_documents_parse_new_fields():
     assert selection.selections[1].instance.id == "medicaid-full"
 
 
+def test_v1_documents_parse_itemized_non_personnel_lines():
+    menu_data = _menu()
+    resourcing = menu_data["items"][2]["resourcing"]
+    del resourcing["non_personnel_usd_per_year"]
+    resourcing["non_personnel"] = [
+        {
+            "label": "Cloud",
+            "usd_per_year": 12000,
+            "basis": "computed",
+            "source": "synthetic source",
+        },
+        {"label": "Corpus", "usd_total": 5000},
+    ]
+
+    assert validate_menu(menu_data) == []
+    lines = Menu.from_dict(menu_data).items[-1].resourcing.non_personnel
+    assert len(lines) == 2
+    assert lines[0].label == "Cloud"
+    assert lines[0].usd_per_year == 12000.0
+    assert lines[0].basis == "computed"
+    assert lines[0].source == "synthetic source"
+    assert lines[1].usd_total == 5000.0
+
+
 def test_v0_fixture_documents_remain_valid(
     portfolio_menu, portfolio_rates, portfolio_selections
 ):
@@ -336,6 +360,7 @@ def test_v0_fixture_documents_remain_valid(
 
 def test_menu_v1_constructs_require_the_v1_marker():
     menu = _menu()
+    menu["items"][2]["resourcing"]["non_personnel"] = []
     menu["schema"] = "grantkit-menu/v0"
     errors = validate_menu(menu)
 
@@ -347,6 +372,7 @@ def test_menu_v1_constructs_require_the_v1_marker():
         "revenue",
         "roster",
         "non_personnel_usd_per_year",
+        "non_personnel",
     ):
         _assert_version_error(errors, construct, "grantkit-menu/v1")
 
@@ -853,6 +879,12 @@ def test_invalid_kind_presets_are_rejected(mutation, rule):
             "roster": [{"role": "Encoding Lead", "fte": 0.25}],
             "non_personnel_usd_per_year": 500,
         },
+        {
+            "roster": [{"role": "Encoding Lead", "fte": 0.25, "months": 6}],
+            "non_personnel": [
+                {"label": "Cloud", "usd_total": 500, "basis": "computed"}
+            ],
+        },
     ],
 )
 def test_kind_items_accept_concrete_resourcing_overrides(override):
@@ -957,6 +989,10 @@ def test_selection_horizon_defaults_to_window_when_parsed():
         [{"role": "Encoding Lead", "fte": 0}],
         [{"role": "Encoding Lead", "fte": 1, "months": 0}],
         [{"role": "Encoding Lead", "fte": 1.25, "months": 18.5}],
+        [
+            {"role": "Encoding Lead", "fte": 0.5, "months": 6},
+            {"role": "Encoding Lead", "fte": 1.25, "months": 18},
+        ],
     ],
 )
 def test_roster_accepts_non_negative_plain_decisions(roster):
@@ -972,8 +1008,16 @@ def test_roster_accepts_non_negative_plain_decisions(roster):
         ["Encoding Lead"],
         [{"role": "", "fte": 1}],
         [{"role": "Encoding Lead", "fte": -1}],
+        [{"role": "Encoding Lead", "fte": float("nan")}],
+        [{"role": "Encoding Lead", "fte": float("inf")}],
+        [{"role": "Encoding Lead", "fte": True}],
+        [{"role": "Encoding Lead", "fte": "1"}],
         [{"role": "Encoding Lead", "fte": _estimate()}],
         [{"role": "Encoding Lead", "fte": 1, "months": -1}],
+        [{"role": "Encoding Lead", "fte": 1, "months": float("nan")}],
+        [{"role": "Encoding Lead", "fte": 1, "months": float("inf")}],
+        [{"role": "Encoding Lead", "fte": 1, "months": True}],
+        [{"role": "Encoding Lead", "fte": 1, "months": "12"}],
         [{"role": "Encoding Lead", "fte": 1, "months": _estimate()}],
     ],
 )
@@ -983,6 +1027,87 @@ def test_roster_rejects_invalid_shapes_and_estimate_decisions(roster):
     errors = validate_menu(menu)
     assert errors
     assert any("roster" in str(error) for error in errors)
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [],
+        [{"label": "Cloud", "usd_total": 0}],
+        [
+            {
+                "label": "Practitioner review",
+                "usd_per_year": 25000.5,
+                "basis": "assumed",
+                "source": "synthetic source",
+            }
+        ],
+    ],
+)
+def test_itemized_non_personnel_accepts_valid_lines(lines):
+    menu = _menu()
+    resourcing = menu["items"][2]["resourcing"]
+    del resourcing["non_personnel_usd_per_year"]
+    resourcing["non_personnel"] = lines
+    assert validate_menu(menu) == []
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        "Cloud",
+        ["Cloud"],
+        [{"usd_total": 1}],
+        [{"label": "", "usd_total": 1}],
+        [{"label": "   ", "usd_total": 1}],
+        [{"label": 1, "usd_total": 1}],
+        [
+            {"label": "Cloud", "usd_total": 1},
+            {"label": " Cloud ", "usd_per_year": 2},
+        ],
+        [{"label": "Cloud"}],
+        [{"label": "Cloud", "usd_total": 1, "usd_per_year": 2}],
+        [{"label": "Cloud", "usd_total": None}],
+        [{"label": "Cloud", "usd_total": -1}],
+        [{"label": "Cloud", "usd_total": float("inf")}],
+        [{"label": "Cloud", "usd_total": float("nan")}],
+        [{"label": "Cloud", "usd_total": True}],
+        [{"label": "Cloud", "usd_total": "100"}],
+        [{"label": "Cloud", "usd_total": _estimate()}],
+        [{"label": "Cloud", "usd_per_year": -1}],
+        [{"label": "Cloud", "usd_per_year": float("inf")}],
+        [{"label": "Cloud", "usd_per_year": float("nan")}],
+        [{"label": "Cloud", "usd_per_year": True}],
+        [{"label": "Cloud", "usd_per_year": "100"}],
+        [{"label": "Cloud", "usd_per_year": _estimate()}],
+        [{"label": "Cloud", "usd_total": 1, "basis": "guessed"}],
+        [{"label": "Cloud", "usd_total": 1, "source": 42}],
+    ],
+)
+def test_itemized_non_personnel_rejects_invalid_lines(lines):
+    menu = _menu()
+    resourcing = menu["items"][2]["resourcing"]
+    del resourcing["non_personnel_usd_per_year"]
+    resourcing["non_personnel"] = lines
+    errors = validate_menu(menu)
+    assert errors
+    assert any("non_personnel" in str(error) for error in errors)
+
+
+def test_itemized_and_legacy_non_personnel_cannot_be_mixed():
+    menu = _menu()
+    menu["items"][2]["resourcing"]["non_personnel"] = [
+        {"label": "Cloud", "usd_total": 1}
+    ]
+    errors = validate_menu(menu)
+    assert any("cannot mix" in str(error) for error in errors)
+
+
+def test_empty_kind_non_personnel_list_is_not_a_costed_field():
+    menu = _menu()
+    menu["kinds"]["coverage"]["resourcing"] = {"non_personnel": []}
+    errors = validate_menu(menu)
+    assert any("must contain a costed field" in str(error) for error in errors)
 
 
 @pytest.mark.parametrize("capacity", [0, 0.5, 3])

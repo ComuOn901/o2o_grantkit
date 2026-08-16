@@ -112,6 +112,44 @@ def test_zero_duration_is_not_coerced_for_roster_or_non_personnel(
     assert cost.one_time_usd == 0
 
 
+def test_zero_duration_itemized_total_remains_instantaneous(
+    make_portfolio, portfolio_menu, portfolio_rates
+):
+    menu = _zero_duration_menu(portfolio_menu, schema="grantkit-menu/v1")
+    menu["items"][2]["resourcing"] = {
+        "non_personnel": [
+            {"label": "One-time setup", "usd_total": 500},
+            {"label": "Annual cloud", "usd_per_year": 12000},
+        ]
+    }
+    selection = _selection(schema="grantkit-selection/v1")
+    assert validate_menu(menu) == []
+    root = make_portfolio(
+        menu=menu,
+        rates=portfolio_rates,
+        selections=[selection],
+    )
+    portfolio = load_portfolio(root)
+    cost = selection_cost(portfolio.selections[0], portfolio)
+
+    assert cost.contract_usd == pytest.approx(500.0)
+    assert cost.items[0].item.to_dict()["non_personnel"] == [
+        {
+            "label": "One-time setup",
+            "usd": pytest.approx(500.0),
+            "basis": None,
+            "source": None,
+        },
+        {
+            "label": "Annual cloud",
+            "usd": pytest.approx(0.0),
+            "basis": None,
+            "source": None,
+        },
+    ]
+    assert cost.periods[0]["cost"]["contract"] == pytest.approx(500.0)
+
+
 def test_zero_duration_org_base_is_instantaneous_not_window_spread(
     make_portfolio, portfolio_menu, portfolio_rates
 ):
