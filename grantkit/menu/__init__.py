@@ -18,7 +18,17 @@ from .engine import (
 )
 from .gates import run_gates
 from .loader import Portfolio, PortfolioError, load_portfolio
+from .model import model_bundle
+from .resolve import (
+    ResolvedItem,
+    ResolvedRevenueStream,
+    evaluate_form,
+    resolve_item,
+)
 from .schema import (
+    InlineInstance,
+    Kind,
+    KindPreset,
     Menu,
     MenuItem,
     OrgBase,
@@ -28,9 +38,11 @@ from .schema import (
     Rates,
     Resourcing,
     RoleRate,
+    RosterLine,
     Selection,
     SelectionLine,
     UnitCost,
+    as_number,
     validate_menu,
     validate_rates,
     validate_selection,
@@ -41,12 +53,17 @@ __all__ = [
     "load_portfolio",
     "Portfolio",
     "PortfolioError",
+    "model_bundle",
     # Engine
     "compile_selection",
     "selection_cost",
     "item_cost",
     "ItemCost",
     "SelectionCost",
+    "resolve_item",
+    "evaluate_form",
+    "ResolvedItem",
+    "ResolvedRevenueStream",
     # Gates
     "run_gates",
     # Schemas
@@ -55,6 +72,10 @@ __all__ = [
     "UnitCost",
     "Overheads",
     "Resourcing",
+    "RosterLine",
+    "Kind",
+    "KindPreset",
+    "InlineInstance",
     "Rates",
     "RoleRate",
     "RateComponent",
@@ -65,4 +86,5 @@ __all__ = [
     "validate_menu",
     "validate_rates",
     "validate_selection",
+    "as_number",
 ]

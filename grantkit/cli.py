@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import click
 from rich.console import Console
@@ -33,13 +33,9 @@ from .core.project import GrantProject, GrantProjectError
 from .core.review import build_review
 from .core.scaffold import ScaffoldError, init_project
 from .core.status import build_status, days_until_deadline, write_status
-from .menu import (
-    Portfolio,
-    PortfolioError,
-    load_portfolio,
-    run_gates,
-    selection_cost,
-)
+from .menu import run_gates, selection_cost
+from .menu.loader import Portfolio, PortfolioError, load_portfolio
+from .menu.model import model_bundle
 from .menu.render import budget_json, budget_markdown, print_budget
 from .menu.schema import Selection
 from .packs import FunderPack
@@ -355,6 +351,19 @@ def _print_status(project: GrantProject) -> None:
     help="Emit the full structured compilation (or gate findings) as JSON.",
 )
 @click.option(
+    "--all",
+    "all_selections",
+    is_flag=True,
+    help="Compile every selection; requires --json.",
+)
+@click.option(
+    "--export-model",
+    "export_model",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the normalized grantkit-model/v1 bundle.",
+)
+@click.option(
     "--output",
     "output",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -369,13 +378,22 @@ def _print_status(project: GrantProject) -> None:
         "--output, prints the markdown document to stdout)."
     ),
 )
+@click.option(
+    "--periods",
+    "show_periods",
+    is_flag=True,
+    help="Include phasing and staffing tables in rich/Markdown output.",
+)
 @PATH_ARG
 def budget(
     selection_id: Optional[str],
     check_only: bool,
     as_json: bool,
+    all_selections: bool,
+    export_model: Optional[Path],
     output: Optional[Path],
     narrative: bool,
+    show_periods: bool,
     path: Path,
 ) -> None:
     """Compile a portfolio selection into a budget (menu x rates).
@@ -387,12 +405,114 @@ def budget(
         raise click.UsageError("--output cannot be used with --check")
     if check_only and narrative:
         raise click.UsageError("--narrative cannot be used with --check")
+    if check_only and show_periods:
+        raise click.UsageError("--periods cannot be used with --check")
     if as_json and narrative and output is None:
         raise click.UsageError(
             "--narrative with --json requires --output for the markdown"
         )
+    if all_selections and not as_json:
+        raise click.UsageError("--all requires --json")
+    if all_selections and selection_id is not None:
+        raise click.UsageError("--selection cannot be used with --all")
+    if all_selections and check_only:
+        raise click.UsageError("--check cannot be used with --all")
+    if all_selections and output is not None:
+        raise click.UsageError("--output cannot be used with --all")
+    if all_selections and narrative:
+        raise click.UsageError("--narrative cannot be used with --all")
+    if export_model is not None:
+        conflicts = [
+            (selection_id is not None, "--selection"),
+            (all_selections, "--all"),
+            (check_only, "--check"),
+            (as_json, "--json"),
+            (output is not None, "--output"),
+            (narrative, "--narrative"),
+            (show_periods, "--periods"),
+        ]
+        for active, option in conflicts:
+            if active:
+                raise click.UsageError(
+                    f"{option} cannot be used with --export-model"
+                )
 
-    portfolio, selection_id, pack = _load_portfolio_target(path, selection_id)
+    portfolio, selection_id, pack = _load_portfolio_target(
+        path,
+        selection_id,
+        resolve_bound_selection=not (
+            all_selections or export_model is not None
+        ),
+    )
+
+    if export_model is not None:
+        result = CheckResult(items=run_gates(portfolio))
+        if result.errors:
+            _print_checks(result)
+            err_console.print(
+                "[red]Cannot export: fix the reported errors.[/red]"
+            )
+            raise SystemExit(1)
+        _emit_budget_warnings(result)
+        payload = (
+            json.dumps(
+                model_bundle(portfolio),
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        try:
+            Path(export_model).write_text(payload, encoding="utf-8")
+        except OSError as exc:
+            err_console.print(
+                _terminal_text(
+                    f"Could not write model bundle to {export_model}: {exc}",
+                    style="red",
+                )
+            )
+            raise SystemExit(2)
+        console.print(
+            _terminal_text(
+                f"Wrote model bundle to {export_model}", style="green"
+            )
+        )
+        return
+
+    if all_selections:
+        result = CheckResult(items=run_gates(portfolio, None, pack))
+        if result.errors:
+            sys.stdout.write(
+                json.dumps(
+                    result.to_dict(), indent=2, sort_keys=True, allow_nan=False
+                )
+                + "\n"
+            )
+            err_console.print(
+                "[red]Cannot compile: fix the reported errors (or run "
+                "budget --check).[/red]"
+            )
+            raise SystemExit(1)
+        _emit_budget_warnings(result)
+        compiled = {
+            selection.id: budget_json(
+                portfolio, selection, selection_cost(selection, portfolio)
+            )
+            for selection in sorted(
+                portfolio.selections, key=lambda item: item.id
+            )
+        }
+        sys.stdout.write(
+            json.dumps(
+                {"selections": compiled},
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        return
 
     if check_only:
         if selection_id is not None:
@@ -420,21 +540,16 @@ def budget(
             "budget --check).[/red]"
         )
         raise SystemExit(1)
-    for item in result.items:
-        err_console.print(
-            Text.assemble(
-                ("warning", "yellow"),
-                " ",
-                _terminal_text(item.rule),
-                ": ",
-                _terminal_text(item.message),
-            )
-        )
+    _emit_budget_warnings(result)
 
     cost = selection_cost(selection, portfolio)
     if output:
         payload = budget_markdown(
-            portfolio, selection, cost, narrative=narrative
+            portfolio,
+            selection,
+            cost,
+            narrative=narrative,
+            periods=show_periods,
         )
         try:
             Path(output).write_text(payload, encoding="utf-8")
@@ -457,14 +572,38 @@ def budget(
         )
     elif narrative and not output:
         sys.stdout.write(
-            budget_markdown(portfolio, selection, cost, narrative=True)
+            budget_markdown(
+                portfolio,
+                selection,
+                cost,
+                narrative=True,
+                periods=show_periods,
+            )
         )
     elif not output:
-        print_budget(console, portfolio, selection, cost)
+        print_budget(console, portfolio, selection, cost, periods=show_periods)
+
+
+def _emit_budget_warnings(result: CheckResult) -> None:
+    for item in result.items:
+        if item.level != "warning":
+            continue
+        err_console.print(
+            Text.assemble(
+                ("warning", "yellow"),
+                " ",
+                _terminal_text(item.rule),
+                ": ",
+                _terminal_text(item.message),
+            )
+        )
 
 
 def _load_portfolio_target(
-    path: Path, selection_id: Optional[str]
+    path: Path,
+    selection_id: Optional[str],
+    *,
+    resolve_bound_selection: bool = True,
 ) -> tuple[Portfolio, Optional[str], Optional[FunderPack]]:
     """Resolve PATH to (portfolio, selection id, pack).
 
@@ -520,7 +659,7 @@ def _load_portfolio_target(
     except PortfolioError as exc:
         err_console.print(_terminal_text(exc, style="red"))
         raise SystemExit(2)
-    if bound_project and selection_id is None:
+    if bound_project and selection_id is None and resolve_bound_selection:
         selection_id = _resolve_selection(portfolio, None).id
     return portfolio, selection_id, pack
 
@@ -538,7 +677,7 @@ def _resolve_selection(
             )
             raise SystemExit(2)
         if len(portfolio.selections) == 1:
-            return portfolio.selections[0]
+            return cast(Selection, portfolio.selections[0])
         available = ", ".join(portfolio.selection_ids) or "(none)"
         err_console.print(
             _terminal_text(
@@ -560,7 +699,7 @@ def _resolve_selection(
             )
         )
         raise SystemExit(2)
-    return selection
+    return cast(Selection, selection)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -19,10 +19,12 @@ retirement and benefits schedule, and emits this format directly.
 
 ## The file
 
-Schema marker: `schema: grantkit-rates/v0`.
+Schema marker: `schema: grantkit-rates/v1`. GrantKit also accepts every
+`grantkit-rates/v0` file; `capacity_fte` is optional, so upgrading the marker
+does not change an existing portfolio's arithmetic.
 
 ```yaml
-schema: grantkit-rates/v0
+schema: grantkit-rates/v1
 provider: "eggnest-employer 0.2.0"   # generator + version (required)
 generated: "2026-08-15"              # ISO date (required)
 scenario: "axiom-foundation-2026"    # provider-side scenario id (optional)
@@ -38,6 +40,7 @@ roles:
                                      # menu's fte_months; unique
     loaded_usd: 320000               # required: annual fully-loaded
                                      # cost, > 0
+    capacity_fte: 1.0                # optional available headcount
     base_usd: 240000                 # recommended: annual base salary
     soc: "15-1252"                   # optional SOC code
     components:                      # optional breakdown
@@ -65,6 +68,10 @@ roles:
 - **Required keys**: `schema`, `provider`, `generated` (an ISO date),
   `currency`, and `roles`. Each role requires `role` (unique) and a
   positive `loaded_usd`.
+- **Capacity is optional**: `capacity_fte`, when present, is a finite,
+  non-negative number. It is available headcount for planning, not a salary
+  component, funding fraction, estimate object, or funder limit. Zero is a
+  meaningful declaration that no current capacity is available.
 - **Basis vocabulary**: every component's `basis` is exactly one of
   `computed` (derived from encoded rules or data), `configured` (a
   scenario input someone chose), or `assumed` (a placeholder guess).
@@ -97,9 +104,9 @@ roles:
 
 ## Advisory heuristics
 
-`grantkit budget --check` runs two warnings over the rates. Both are
-GrantKit's own heuristics — documented sanity checks, not funder rules —
-and both need `base_usd` to be present:
+`grantkit budget --check` runs two reconciliation warnings over rate data.
+Both are GrantKit's own heuristics — documented sanity checks, not funder
+rules — and both need `base_usd` to be present:
 
 - `load_factor_suspicious` — `loaded_usd / base_usd` below 1.05 or
   above 2.0. The low side catches a real bug class found in the wild:
@@ -112,6 +119,21 @@ and both need `base_usd` to be present:
 
 A loaded-only role (no `base_usd`) is valid and triggers neither
 heuristic.
+
+### Capacity warning
+
+`capacity_fte` enables the portfolio-level `role_over_allocated` warning.
+For each role and twelve-month period, GrantKit sums incremental FTE and the
+unscaled roster FTE of referenced org bases across all `live` and `awarded`
+selections. When a draft, withdrawn, or declined selection is compiled
+directly, that selection is added to the binding set as a planning scenario.
+An unscoped portfolio check considers only live and awarded selections.
+
+The gate warns only when demand is greater than
+`capacity_fte * 1.0000001`. Its message reports the role, period, demand,
+capacity, and contributing selections. Equality, including the relative
+tolerance, passes. The warning is advisory and does not change costs or block
+compilation.
 
 ## Writing your own provider
 
@@ -128,9 +150,12 @@ over your payroll export works. Guidelines:
 5. Add `benchmark` blocks where you have market data (e.g. BLS OEWS by
    SOC code); the compiled personnel table and narrative skeleton cite
    them verbatim.
-6. Test your numbers in your own suite. GrantKit will not re-derive
+6. Add `capacity_fte` only when the organization can defend an available
+   headcount. It is a planning decision and should not be inferred from a
+   salary or a proposal's funding share.
+7. Test your numbers in your own suite. GrantKit will not re-derive
    them, by design.
-7. Never degrade silently — recommended conduct for every provider.
+8. Never degrade silently — recommended conduct for every provider.
    When part of the computation is unavailable (a role with no
    employer tax state; tax variables missing from the installed
    environment), emit the number you can stand behind, say exactly

@@ -8,6 +8,9 @@
 Completion evidence: {{ item.evidence }}
 
 Cost: {{ item.cost_line }}.
+{% if item.revenue_enabled %}
+Revenue enabled: {{ item.revenue_enabled }}.
+{% endif %}
 
 {% endfor %}
 ## Budget justification
