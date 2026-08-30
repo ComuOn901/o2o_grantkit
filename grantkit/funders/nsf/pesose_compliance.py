@@ -26,6 +26,8 @@ Rule sources:
   https://www.nsf.gov/policies/pappg/24-1/ch-2-proposal-preparation
   https://www.nsf.gov/policies/document/pappg24-1-supplement-1
   https://www.nsf.gov/notices/important/important-notice-no-149-updates-nsf-research-security/in149
+* PAPPG 24-1 I.G.2 (valid and active UEI and SAM registration):
+  https://www.nsf.gov/policies/pappg/24-1/ch-1-pre-submission
 
 Declarations use the literal ``"not_applicable"`` only for a condition that
 the accompanying scope declaration establishes does not apply. Missing,
@@ -47,7 +49,8 @@ NOT_APPLICABLE: Final = "not_applicable"
 PESOSE_RULE_SOURCES: Final = {
     "eligibility": (
         "NSF 26-506 IV and V.A, Proposal Preparation Instructions; PAPPG "
-        "24-1 I.E.2 for federal agencies and FFRDCs"
+        "24-1 I.G.2 for UEI and SAM registration; PAPPG 24-1 I.E.2 for "
+        "federal agencies and FFRDCs"
     ),
     "letters": "NSF 26-506 V.A, Other Supplementary Documents item 1",
     "personnel": "NSF 26-506 V.A, Other Supplementary Documents item 2",
@@ -358,10 +361,19 @@ def validate_eligibility(
 
     _require_true(
         declarations,
-        "active_uei",
+        "uei_is_valid_and_active",
         findings,
         "pesose_eligibility_active_uei",
-        "The proposing organization must explicitly attest active_uei: true.",
+        "The proposing organization must explicitly attest "
+        "uei_is_valid_and_active: true.",
+    )
+    _require_true(
+        declarations,
+        "sam_registration_is_valid_and_active",
+        findings,
+        "pesose_eligibility_active_sam_registration",
+        "The proposing organization must explicitly attest "
+        "sam_registration_is_valid_and_active: true.",
     )
     _require_true(
         declarations,
@@ -849,28 +861,31 @@ def validate_eligibility(
         "The PI must explicitly attest a legal right to work in the U.S. for "
         "the proposing organization.",
     )
-    has_other_funded_employees = _require_boolean(
+    has_other_funded_proposer_employees = _require_boolean(
         declarations,
-        "has_other_pesose_funded_employees",
+        "has_other_pesose_funded_proposer_employees",
         findings,
         "pesose_eligibility_funded_employee_scope",
-        "Declare has_other_pesose_funded_employees as true or false so the "
-        "legal-right-to-work requirement can be evaluated.",
+        "Declare has_other_pesose_funded_proposer_employees as true or false "
+        "so the legal-right-to-work requirement can be evaluated for "
+        "employees of the proposing organization.",
     )
-    if has_other_funded_employees is not None:
+    if has_other_funded_proposer_employees is not None:
         _require_conditional(
             declarations,
-            "all_other_funded_employees_have_legal_right_to_work",
-            applicable=has_other_funded_employees,
+            "all_other_pesose_funded_proposer_employees_have_legal_right_to_work",
+            applicable=has_other_funded_proposer_employees,
             findings=findings,
             rule="pesose_eligibility_funded_employee_work_authorization",
             required_message=(
-                "Every other employee receiving PESOSE support must attest a "
-                "legal right to work in the U.S. for the proposer."
+                "Every other employee of the proposing organization receiving "
+                "PESOSE support must attest a legal right to work in the U.S. "
+                "for the proposing organization."
             ),
             inapplicable_message=(
-                "all_other_funded_employees_have_legal_right_to_work must be "
-                "not_applicable when there are no other funded employees."
+                "all_other_pesose_funded_proposer_employees_have_legal_right_"
+                "to_work must be not_applicable when there are no other "
+                "PESOSE-funded employees of the proposing organization."
             ),
         )
     return findings
@@ -892,15 +907,17 @@ def validate_budget_scope_declarations(
     findings: list[PESOSEFinding] = []
     if (
         _budget_has_positive_line_b_personnel(budget)
-        and eligibility.get("has_other_pesose_funded_employees") is False
+        and eligibility.get("has_other_pesose_funded_proposer_employees")
+        is False
     ):
         findings.append(
             _error(
                 "pesose_eligibility_funded_employee_scope_contradiction",
                 "budget.yaml contains a positive Line B personnel request, "
-                "but has_other_pesose_funded_employees is false. Declare the "
-                "funded-employee scope as true and attest work authorization "
-                "for every other funded employee.",
+                "but has_other_pesose_funded_proposer_employees is false. "
+                "Declare the funded-proposer-employee scope as true and "
+                "attest work authorization for every other funded employee "
+                "of the proposing organization.",
             )
         )
 

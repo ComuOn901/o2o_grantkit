@@ -90,7 +90,8 @@ def test_scaffolded_pesose_uses_track_2_pack_and_current_sections(tmp_path):
     eligibility = compliance["eligibility"]
     assert {
         "organization_type",
-        "active_uei",
+        "uei_is_valid_and_active",
+        "sam_registration_is_valid_and_active",
         "single_lead_organization",
         "pi_has_legal_right_to_work",
         "no_pi_copi_or_senior_key_has_primary_appointment_at_overseas_us_ihe_branch",

@@ -578,7 +578,8 @@ def _compliant_pesose_structural_config():
         "pappg_conditional_requirements_reviewed": True,
         "eligibility": {
             "organization_type": "nonprofit",
-            "active_uei": True,
+            "uei_is_valid_and_active": True,
+            "sam_registration_is_valid_and_active": True,
             "single_lead_organization": True,
             "has_other_nsf_funded_organizations": False,
             "all_other_nsf_funded_organizations_are_subawardees": (
@@ -629,8 +630,8 @@ def _compliant_pesose_structural_config():
                 NOT_APPLICABLE
             ),
             "pi_has_legal_right_to_work": True,
-            "has_other_pesose_funded_employees": False,
-            "all_other_funded_employees_have_legal_right_to_work": (
+            "has_other_pesose_funded_proposer_employees": False,
+            "all_other_pesose_funded_proposer_employees_have_legal_right_to_work": (
                 NOT_APPLICABLE
             ),
         },

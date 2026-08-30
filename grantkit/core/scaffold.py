@@ -199,7 +199,8 @@ def _pesose_config_stub() -> dict:
             "pappg_conditional_requirements_reviewed": False,
             "eligibility": {
                 "organization_type": None,
-                "active_uei": None,
+                "uei_is_valid_and_active": None,
+                "sam_registration_is_valid_and_active": None,
                 "single_lead_organization": None,
                 "has_other_nsf_funded_organizations": None,
                 "all_other_nsf_funded_organizations_are_subawardees": None,
@@ -228,8 +229,8 @@ def _pesose_config_stub() -> dict:
                 "federal_ffrdc_pappg_ie2_exception_routes": None,
                 "cognizant_nsf_program_officer_determined_federal_ffrdc_eligible_in_advance": None,
                 "pi_has_legal_right_to_work": None,
-                "has_other_pesose_funded_employees": None,
-                "all_other_funded_employees_have_legal_right_to_work": None,
+                "has_other_pesose_funded_proposer_employees": None,
+                "all_other_pesose_funded_proposer_employees_have_legal_right_to_work": None,
             },
             "letters": {
                 "manifest": {},

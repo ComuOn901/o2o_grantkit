@@ -52,7 +52,8 @@ def _eligibility(
     )
     return {
         "organization_type": organization_type,
-        "active_uei": True,
+        "uei_is_valid_and_active": True,
+        "sam_registration_is_valid_and_active": True,
         "single_lead_organization": True,
         "has_other_nsf_funded_organizations": False,
         "all_other_nsf_funded_organizations_are_subawardees": (NOT_APPLICABLE),
@@ -113,8 +114,8 @@ def _eligibility(
             True if federal_or_ffrdc else NOT_APPLICABLE
         ),
         "pi_has_legal_right_to_work": True,
-        "has_other_pesose_funded_employees": False,
-        "all_other_funded_employees_have_legal_right_to_work": (
+        "has_other_pesose_funded_proposer_employees": False,
+        "all_other_pesose_funded_proposer_employees_have_legal_right_to_work": (
             NOT_APPLICABLE
         ),
     }
@@ -382,7 +383,11 @@ def test_unknown_organization_type_is_a_blocker():
 @pytest.mark.parametrize(
     ("key", "rule"),
     [
-        ("active_uei", "pesose_eligibility_active_uei"),
+        ("uei_is_valid_and_active", "pesose_eligibility_active_uei"),
+        (
+            "sam_registration_is_valid_and_active",
+            "pesose_eligibility_active_sam_registration",
+        ),
         ("single_lead_organization", "pesose_eligibility_single_lead"),
         (
             "pi_has_legal_right_to_work",
@@ -674,15 +679,15 @@ def test_other_funded_employee_work_authorization_is_conditional():
     declarations = _eligibility()
     declarations.update(
         {
-            "has_other_pesose_funded_employees": True,
-            "all_other_funded_employees_have_legal_right_to_work": True,
+            "has_other_pesose_funded_proposer_employees": True,
+            "all_other_pesose_funded_proposer_employees_have_legal_right_to_work": True,
         }
     )
     assert validate_eligibility(declarations) == []
 
-    declarations["all_other_funded_employees_have_legal_right_to_work"] = (
-        NOT_APPLICABLE
-    )
+    declarations[
+        "all_other_pesose_funded_proposer_employees_have_legal_right_to_work"
+    ] = NOT_APPLICABLE
     assert "pesose_eligibility_funded_employee_work_authorization" in _rules(
         validate_eligibility(declarations)
     )
