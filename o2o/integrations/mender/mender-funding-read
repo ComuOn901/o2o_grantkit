@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_state(path: Path) -> dict:
+    if not path.exists():
+        fail(f"funding state not found: {path}")
+
+    try:
+        state = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"invalid funding state JSON: {exc}")
+
+    required = {
+        "schema",
+        "proposal",
+        "validation",
+        "governance",
+        "authority",
+    }
+
+    missing = sorted(required - state.keys())
+
+    if missing:
+        fail("funding state missing keys: " + ",".join(missing))
+
+    return state
+
+
+def assert_truth_boundary(state: dict) -> None:
+    governance = state["governance"]
+    authority = state["authority"]
+
+    if governance.get("submission_authorized") is not False:
+        fail("submission_authorized must remain false")
+
+    if governance.get("submission_observed") is not False:
+        fail("submission_observed must remain false")
+
+    if governance.get("award_observed") is not False:
+        fail("award_observed must remain false")
+
+    if authority.get("changed") is not False:
+        fail("authority.changed must remain false")
+
+
+def classify(state: dict) -> str:
+    validation = state["validation"]
+    proposal = state["proposal"]
+
+    errors = int(validation.get("errors", 0))
+    warnings = int(validation.get("warnings", 0))
+    completion = float(proposal.get("completion_percent", 0))
+
+    if errors > 0:
+        return "NEEDS_REPAIR"
+
+    if warnings > 0:
+        return "NEEDS_REVIEW"
+
+    if completion < 100:
+        return "IN_PROGRESS"
+
+    return "READY_FOR_HUMAN_REVIEW"
+
+
+def build_queue(state: dict) -> list[dict]:
+    classification = classify(state)
+
+    queue = []
+
+    if classification == "NEEDS_REPAIR":
+        queue.append({
+            "task": "repair_validation_errors",
+            "role": "CODER_OR_WRITER",
+            "authorization_required": False,
+        })
+
+    elif classification == "NEEDS_REVIEW":
+        queue.append({
+            "task": "review_validation_warnings",
+            "role": "VERIFIER_OR_WRITER",
+            "authorization_required": False,
+        })
+
+    elif classification == "IN_PROGRESS":
+        queue.append({
+            "task": "continue_proposal_development",
+            "role": "WRITER_OR_RESEARCHER",
+            "authorization_required": False,
+        })
+
+    elif classification == "READY_FOR_HUMAN_REVIEW":
+        queue.append({
+            "task": "prepare_human_review_queue",
+            "role": "MENDER",
+            "authorization_required": False,
+        })
+
+    return queue
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Read and classify O2O funding state for MENDER."
+    )
+
+    parser.add_argument(
+        "state",
+        help="Path to o2o-funding-state.json",
+    )
+
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable MENDER view",
+    )
+
+    args = parser.parse_args()
+
+    path = Path(args.state).expanduser().resolve()
+    state = load_state(path)
+
+    assert_truth_boundary(state)
+
+    classification = classify(state)
+    queue = build_queue(state)
+
+    view = {
+        "schema": "o2o.mender-funding-read.v1",
+        "source_state": str(path),
+        "classification": classification,
+        "proposal": {
+            "title": state["proposal"].get("title", ""),
+            "funder": state["proposal"].get("funder", ""),
+            "program": state["proposal"].get("program", ""),
+            "deadline": state["proposal"].get("deadline", ""),
+            "completion_percent": state["proposal"].get(
+                "completion_percent", 0
+            ),
+        },
+        "validation": {
+            "grantkit_checked": state["validation"].get(
+                "grantkit_checked", False
+            ),
+            "errors": state["validation"].get("errors", 0),
+            "warnings": state["validation"].get("warnings", 0),
+        },
+        "queue": queue,
+        "governance": {
+            "mender_can_inspect": True,
+            "mender_can_classify": True,
+            "mender_can_queue": True,
+            "mender_can_route": True,
+            "mender_can_authorize": False,
+            "mender_can_submit": False,
+            "mender_is_governor": False,
+        },
+        "authority": {
+            "changed": False,
+        },
+    }
+
+    if args.json:
+        print(json.dumps(view, indent=2))
+    else:
+        print(f"CLASSIFICATION={classification}")
+        print(
+            "COMPLETION_PERCENT="
+            + str(view["proposal"]["completion_percent"])
+        )
+        print(
+            "GRANTKIT_ERRORS="
+            + str(view["validation"]["errors"])
+        )
+        print(
+            "GRANTKIT_WARNINGS="
+            + str(view["validation"]["warnings"])
+        )
+        print("MENDER_CAN_INSPECT=TRUE")
+        print("MENDER_CAN_CLASSIFY=TRUE")
+        print("MENDER_CAN_QUEUE=TRUE")
+        print("MENDER_CAN_ROUTE=TRUE")
+        print("MENDER_CAN_AUTHORIZE=FALSE")
+        print("MENDER_CAN_SUBMIT=FALSE")
+        print("MENDER_IS_GOVERNOR=FALSE")
+        print("AUTHORITY_CHANGED=FALSE")
+
+        for index, item in enumerate(queue, start=1):
+            print(
+                f"QUEUE_{index}="
+                f"{item['task']}|{item['role']}|"
+                f"authorization_required="
+                f"{str(item['authorization_required']).lower()}"
+            )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
