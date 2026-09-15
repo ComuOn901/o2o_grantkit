@@ -9,7 +9,7 @@ GrantKit
   v
 O2O Adaptation Layer
   |
-  +-- MUNDER coordination
+  +-- MENDER coordination
   +-- PNEUMA evidence/state
   +-- Paraclete review surface
   +-- Commons portfolio visibility

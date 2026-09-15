@@ -17,7 +17,7 @@ SUBMITTED != AWARDED
 ## Roles
 
 - GrantKit: deterministic validation and compilation
-- MUNDER: coordination and task routing
+- MENDER: coordination and task routing
 - Paraclete: human operating and review surface
 - Commons: portfolio visibility
 - PNEUMA: evidence, state, and custody

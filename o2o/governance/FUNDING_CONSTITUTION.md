@@ -34,7 +34,7 @@ The O2O adaptation layer MUST NOT convert validation results into authority.
 - fabricate funder requirements
 - treat AI output as governance approval
 
-## MUNDER may
+## MENDER may
 
 - coordinate proposal work
 - inspect GrantKit status
@@ -42,7 +42,7 @@ The O2O adaptation layer MUST NOT convert validation results into authority.
 - route research and writing tasks
 - assemble review queues
 
-## MUNDER may not
+## MENDER may not
 
 - self-authorize submission
 - create financial commitments
