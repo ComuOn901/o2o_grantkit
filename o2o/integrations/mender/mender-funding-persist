@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(65536), b""):
+            h.update(block)
+
+    return h.hexdigest()
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        fail(f"input not found: {path}")
+
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON: {path}: {exc}")
+
+
+def assert_mender_boundary(view: dict) -> None:
+    if view.get("schema") != "o2o.mender-funding-read.v1":
+        fail("unexpected MENDER view schema")
+
+    governance = view.get("governance", {})
+    authority = view.get("authority", {})
+
+    required_false = {
+        "mender_can_authorize": governance.get(
+            "mender_can_authorize"
+        ),
+        "mender_can_submit": governance.get(
+            "mender_can_submit"
+        ),
+        "mender_is_governor": governance.get(
+            "mender_is_governor"
+        ),
+        "authority.changed": authority.get("changed"),
+    }
+
+    violations = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if violations:
+        fail(
+            "truth boundary violation: "
+            + ",".join(violations)
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Persist MENDER funding coordination evidence "
+            "into an append-only PNEUMA evidence root."
+        )
+    )
+
+    parser.add_argument(
+        "view",
+        help="Path to MENDER machine-readable JSON view",
+    )
+
+    parser.add_argument(
+        "--evidence-root",
+        required=True,
+        help="PNEUMA evidence directory",
+    )
+
+    args = parser.parse_args()
+
+    view_path = Path(args.view).expanduser().resolve()
+    evidence_root = (
+        Path(args.evidence_root)
+        .expanduser()
+        .resolve()
+    )
+
+    view = load_json(view_path)
+    assert_mender_boundary(view)
+
+    view_hash = sha256_file(view_path)
+
+    timestamp = datetime.now(
+        timezone.utc
+    ).strftime("%Y%m%dT%H%M%S.%fZ")
+
+    bundle_id = (
+        f"mender-funding-{timestamp}-"
+        f"{view_hash[:12]}"
+    )
+
+    evidence_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    bundles_root = evidence_root / "bundles"
+
+    bundles_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    bundle = bundles_root / bundle_id
+
+    # A bundle ID may never overwrite an existing bundle.
+    try:
+        bundle.mkdir()
+    except FileExistsError:
+        fail(
+            f"evidence bundle already exists: {bundle}"
+        )
+
+    persisted_view = bundle / "mender-view.json"
+    queue_path = bundle / "queue.json"
+    manifest_path = bundle / "manifest.json"
+
+    persisted_view.write_text(
+        json.dumps(view, indent=2) + "\n"
+    )
+
+    queue = view.get("queue", [])
+
+    queue_document = {
+        "schema": "o2o.mender-funding-queue.v1",
+        "bundle_id": bundle_id,
+        "classification": view.get(
+            "classification"
+        ),
+        "items": queue,
+        "governance": {
+            "queue_is_authorization": False,
+            "queue_is_execution": False,
+            "mender_can_authorize": False,
+            "mender_can_submit": False,
+        },
+        "authority": {
+            "changed": False,
+        },
+    }
+
+    queue_path.write_text(
+        json.dumps(
+            queue_document,
+            indent=2,
+        )
+        + "\n"
+    )
+
+    persisted_view_hash = sha256_file(
+        persisted_view
+    )
+    queue_hash = sha256_file(queue_path)
+
+    manifest = {
+        "schema": "o2o.mender-evidence.v1",
+        "bundle_id": bundle_id,
+        "created_at": timestamp,
+        "source": {
+            "mender_view": str(view_path),
+            "sha256": view_hash,
+        },
+        "artifacts": {
+            "mender_view": {
+                "path": str(persisted_view),
+                "sha256": persisted_view_hash,
+            },
+            "queue": {
+                "path": str(queue_path),
+                "sha256": queue_hash,
+            },
+        },
+        "classification": view.get(
+            "classification"
+        ),
+        "queue_items": len(queue),
+        "governance": {
+            "evidence_is_authorization": False,
+            "queue_is_authorization": False,
+            "queue_is_execution": False,
+            "mender_can_authorize": False,
+            "mender_can_submit": False,
+            "mender_is_governor": False,
+        },
+        "authority": {
+            "changed": False,
+        },
+    }
+
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2)
+        + "\n"
+    )
+
+    manifest_hash = sha256_file(
+        manifest_path
+    )
+
+    ledger_path = (
+        evidence_root / "ledger.jsonl"
+    )
+
+    ledger_record = {
+        "schema": "o2o.mender-evidence-ledger.v1",
+        "bundle_id": bundle_id,
+        "created_at": timestamp,
+        "bundle_path": str(bundle),
+        "manifest_sha256": manifest_hash,
+        "classification": view.get(
+            "classification"
+        ),
+        "queue_items": len(queue),
+        "evidence_persisted": True,
+        "queue_persisted": True,
+        "authorization_occurred": False,
+        "execution_occurred": False,
+        "authority_changed": False,
+    }
+
+    with ledger_path.open(
+        "a",
+        encoding="utf-8",
+    ) as ledger:
+        ledger.write(
+            json.dumps(
+                ledger_record,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+
+    print(f"BUNDLE_ID={bundle_id}")
+    print(f"EVIDENCE_BUNDLE={bundle}")
+    print(f"MANIFEST={manifest_path}")
+    print(f"QUEUE={queue_path}")
+    print(f"LEDGER={ledger_path}")
+
+    print(
+        "CLASSIFICATION="
+        + str(view.get("classification"))
+    )
+    print(
+        "QUEUE_ITEMS="
+        + str(len(queue))
+    )
+
+    print("EVIDENCE_PERSISTED=TRUE")
+    print("QUEUE_PERSISTED=TRUE")
+
+    print("EVIDENCE_IS_AUTHORIZATION=FALSE")
+    print("QUEUE_IS_AUTHORIZATION=FALSE")
+    print("QUEUE_IS_EXECUTION=FALSE")
+
+    print("MENDER_CAN_AUTHORIZE=FALSE")
+    print("MENDER_CAN_SUBMIT=FALSE")
+    print("MENDER_IS_GOVERNOR=FALSE")
+
+    print("AUTHORIZATION_OCCURRED=FALSE")
+    print("EXECUTION_OCCURRED=FALSE")
+    print("AUTHORITY_CHANGED=FALSE")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
