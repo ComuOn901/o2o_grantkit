@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+
+"""
+O2O GrantKit state adapter.
+
+Runs GrantKit's real status engine for a proposal, consumes status.json,
+and emits a separate O2O governance envelope.
+
+This adapter is intentionally fail-closed:
+
+VALIDATED != APPROVED
+APPROVED != AUTHORIZED
+AUTHORIZED != SUBMITTED
+SUBMITTED != AWARDED
+
+It never grants authority.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+SCHEMA_ID = "o2o.funding-state.v1"
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def find_grantkit(explicit: str | None) -> str:
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        if not path.exists():
+            fail(f"grantkit executable not found: {path}")
+        return str(path)
+
+    found = shutil.which("grantkit")
+    if not found:
+        fail("grantkit executable not found in PATH")
+
+    return found
+
+
+def load_status(path: Path) -> dict:
+    if not path.exists():
+        fail(f"status.json not produced: {path}")
+
+    try:
+        status = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"status.json is invalid JSON: {exc}")
+
+    required = {
+        "grantkit_version",
+        "generated_at",
+        "grant",
+        "completion",
+        "sections",
+        "checks",
+    }
+
+    missing = sorted(required - status.keys())
+
+    if missing:
+        fail(
+            "status contract missing keys: "
+            + ",".join(missing)
+        )
+
+    checks = status.get("checks", {})
+
+    if "errors" not in checks or "warnings" not in checks:
+        fail("status checks contract incomplete")
+
+    return status
+
+
+def build_o2o_state(
+    project: Path,
+    status_path: Path,
+    status: dict,
+) -> dict:
+    return {
+        "schema": SCHEMA_ID,
+        "proposal": {
+            "project_path": str(project),
+            "grantkit_status": str(status_path),
+            "grantkit_version": status["grantkit_version"],
+            "generated_at": status["generated_at"],
+            "title": status["grant"].get("title", ""),
+            "funder": status["grant"].get("funder", ""),
+            "program": status["grant"].get("program", ""),
+            "deadline": status["grant"].get("deadline", ""),
+            "completion_percent": status["completion"]["percent"],
+        },
+        "validation": {
+            "grantkit_checked": True,
+            "errors": status["checks"]["errors"],
+            "warnings": status["checks"]["warnings"],
+        },
+        "governance": {
+            "proposal_approved": False,
+            "submission_authorized": False,
+            "submission_observed": False,
+            "award_observed": False,
+        },
+        "authority": {
+            "changed": False,
+        },
+    }
+
+
+def assert_governance(state: dict) -> None:
+    governance = state["governance"]
+
+    assert governance["proposal_approved"] is False
+    assert governance["submission_authorized"] is False
+    assert governance["submission_observed"] is False
+    assert governance["award_observed"] is False
+    assert state["authority"]["changed"] is False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate truth-preserving O2O funding state "
+            "from a real GrantKit project."
+        )
+    )
+
+    parser.add_argument(
+        "project",
+        help="Path to directory containing grant.yaml",
+    )
+
+    parser.add_argument(
+        "--grantkit",
+        dest="grantkit",
+        help="Explicit path to GrantKit executable",
+    )
+
+    parser.add_argument(
+        "--output",
+        help=(
+            "Output path. Defaults to "
+            "<project>/o2o-funding-state.json"
+        ),
+    )
+
+    parser.add_argument(
+        "--print",
+        action="store_true",
+        dest="print_state",
+        help="Print generated O2O state JSON",
+    )
+
+    args = parser.parse_args()
+
+    project = Path(args.project).expanduser().resolve()
+
+    if not project.is_dir():
+        fail(f"project directory not found: {project}")
+
+    grant_yaml = project / "grant.yaml"
+
+    if not grant_yaml.exists():
+        fail(f"grant.yaml not found: {grant_yaml}")
+
+    grantkit = find_grantkit(args.grantkit)
+
+    output = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else project / "o2o-funding-state.json"
+    )
+
+    print(f"PROJECT={project}")
+    print(f"GRANTKIT={grantkit}")
+    print("GRANTKIT_STATUS_INVOKED=TRUE")
+
+    result = subprocess.run(
+        [
+            grantkit,
+            "status",
+            str(project),
+            "--json",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
+        print("GRANTKIT_STATUS_PASS=FALSE")
+        print("O2O_STATE_CREATED=FALSE")
+        print("AUTHORITY_CHANGED=FALSE")
+        return result.returncode or 1
+
+    print("GRANTKIT_STATUS_PASS=TRUE")
+
+    status_path = project / "status.json"
+    status = load_status(status_path)
+
+    print("STATUS_JSON_CREATED=TRUE")
+    print("STATUS_CONTRACT_VALID=TRUE")
+
+    state = build_o2o_state(
+        project=project,
+        status_path=status_path,
+        status=status,
+    )
+
+    assert_governance(state)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(state, indent=2) + "\n"
+    )
+
+    print(f"O2O_STATE={output}")
+    print("REAL_STATUS_CONSUMED=TRUE")
+    print("O2O_STATE_CREATED=TRUE")
+    print(
+        f"GRANTKIT_ERRORS="
+        f"{state['validation']['errors']}"
+    )
+    print(
+        f"GRANTKIT_WARNINGS="
+        f"{state['validation']['warnings']}"
+    )
+    print("PROPOSAL_APPROVED=FALSE")
+    print("SUBMISSION_AUTHORIZED=FALSE")
+    print("SUBMISSION_OBSERVED=FALSE")
+    print("AWARD_OBSERVED=FALSE")
+    print("AUTHORITY_CHANGED=FALSE")
+
+    if args.print_state:
+        print()
+        print(json.dumps(state, indent=2))
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
