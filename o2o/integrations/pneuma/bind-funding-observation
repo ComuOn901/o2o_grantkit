@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        fail(f"missing JSON artifact: {path}")
+
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON in {path}: {exc}")
+
+
+def load_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        fail(f"missing JSONL artifact: {path}")
+
+    rows = []
+
+    for number, line in enumerate(
+        path.read_text().splitlines(),
+        start=1,
+    ):
+        if not line.strip():
+            continue
+
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            fail(
+                f"invalid JSONL line {number} in {path}: {exc}"
+            )
+
+    return rows
+
+
+def sha256_bytes(value: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(value)
+    return h.hexdigest()
+
+
+def assert_registry_boundary(registry: dict) -> None:
+    g = registry.get("governance", {})
+
+    required_false = {
+        "registry_is_authorization":
+            g.get("registry_is_authorization"),
+
+        "project_identity_is_authorization":
+            g.get("project_identity_is_authorization"),
+
+        "proposal_identity_is_authorization":
+            g.get("proposal_identity_is_authorization"),
+
+        "history_is_execution":
+            g.get("history_is_execution"),
+
+        "submission_authorized":
+            g.get("submission_authorized"),
+
+        "authority_changed":
+            g.get("authority_changed"),
+    }
+
+    bad = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if bad:
+        fail(
+            "registry truth boundary violation: "
+            + ",".join(bad)
+        )
+
+
+def assert_observation_boundary(record: dict) -> None:
+    required_false = {
+        "authorization_occurred":
+            record.get("authorization_occurred"),
+
+        "execution_occurred":
+            record.get("execution_occurred"),
+
+        "authority_changed":
+            record.get("authority_changed"),
+    }
+
+    bad = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if bad:
+        fail(
+            "observation truth boundary violation: "
+            + ",".join(bad)
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Create an explicit evidence-backed binding "
+            "between a PNEUMA observation and a stable proposal."
+        )
+    )
+
+    parser.add_argument(
+        "--bundle-id",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--proposal-id",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--identity-root",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--evidence-root",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--binding-root",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--evidence-source",
+        required=True,
+        help=(
+            "Source/evidence reference supporting the binding. "
+            "Example: GDRIVE-SRC-002"
+        ),
+    )
+
+    parser.add_argument(
+        "--reason",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--confidence",
+        choices=[
+            "HIGH",
+            "MEDIUM",
+            "LOW",
+        ],
+        required=True,
+    )
+
+    args = parser.parse_args()
+
+    identity_root = (
+        Path(args.identity_root)
+        .expanduser()
+        .resolve()
+    )
+
+    evidence_root = (
+        Path(args.evidence_root)
+        .expanduser()
+        .resolve()
+    )
+
+    binding_root = (
+        Path(args.binding_root)
+        .expanduser()
+        .resolve()
+    )
+
+    registry = load_json(
+        identity_root / "registry.json"
+    )
+
+    assert_registry_boundary(registry)
+
+    proposal_path = (
+        identity_root
+        / "proposals"
+        / f"{args.proposal_id}.json"
+    )
+
+    proposal = load_json(proposal_path)
+
+    ledger = load_jsonl(
+        evidence_root / "ledger.jsonl"
+    )
+
+    matches = [
+        row
+        for row in ledger
+        if row.get("bundle_id")
+        == args.bundle_id
+    ]
+
+    if len(matches) != 1:
+        fail(
+            "expected exactly one observation bundle match "
+            f"for {args.bundle_id}; found {len(matches)}"
+        )
+
+    record = matches[0]
+    assert_observation_boundary(record)
+
+    bundle_path = Path(
+        record["bundle_path"]
+    ).expanduser().resolve()
+
+    view_path = (
+        bundle_path / "mender-view.json"
+    )
+
+    view = load_json(view_path)
+
+    source_snapshot = {
+        "bundle_id":
+            args.bundle_id,
+
+        "bundle_path":
+            str(bundle_path),
+
+        "mender_view_sha256":
+            sha256_bytes(
+                view_path.read_bytes()
+            ),
+
+        "proposal_id":
+            args.proposal_id,
+
+        "proposal_snapshot":
+            proposal,
+
+        "evidence_source":
+            args.evidence_source,
+
+        "reason":
+            args.reason,
+
+        "confidence":
+            args.confidence,
+    }
+
+    created_at = datetime.now(
+        timezone.utc
+    ).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+
+    binding_id = (
+        f"BIND-{args.bundle_id}-"
+        f"{args.proposal_id}"
+    )
+
+    binding = {
+        "schema":
+            "o2o.funding-observation-binding.v1",
+
+        "binding_id":
+            binding_id,
+
+        "created_at":
+            created_at,
+
+        "observation": {
+            "bundle_id":
+                args.bundle_id,
+
+            "bundle_path":
+                str(bundle_path),
+
+            "mender_view_sha256":
+                source_snapshot[
+                    "mender_view_sha256"
+                ],
+        },
+
+        "proposal": {
+            "proposal_id":
+                args.proposal_id,
+
+            "project_id":
+                proposal.get(
+                    "project_id"
+                ),
+        },
+
+        "evidence": {
+            "source":
+                args.evidence_source,
+
+            "reason":
+                args.reason,
+
+            "confidence":
+                args.confidence,
+        },
+
+        "truth": {
+            "binding_is_authorization":
+                False,
+
+            "binding_is_submission":
+                False,
+
+            "binding_is_execution":
+                False,
+
+            "observation_mutated":
+                False,
+
+            "identity_record_mutated":
+                False,
+
+            "authority_changed":
+                False,
+        },
+    }
+
+    binding_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    bindings_dir = (
+        binding_root / "records"
+    )
+
+    bindings_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    binding_path = (
+        bindings_dir
+        / f"{binding_id}.json"
+    )
+
+    if binding_path.exists():
+        existing = load_json(binding_path)
+
+        if existing != binding:
+            fail(
+                "binding already exists with "
+                "different content"
+            )
+
+        print("BINDING_ALREADY_EXISTS=TRUE")
+
+    else:
+        binding_path.write_text(
+            json.dumps(
+                binding,
+                indent=2,
+            )
+            + "\n"
+        )
+
+        print("BINDING_ALREADY_EXISTS=FALSE")
+
+    ledger_path = (
+        binding_root / "bindings.jsonl"
+    )
+
+    existing_rows = (
+        load_jsonl(ledger_path)
+        if ledger_path.exists()
+        else []
+    )
+
+    if not any(
+        row.get("binding_id")
+        == binding_id
+        for row in existing_rows
+    ):
+        with ledger_path.open(
+            "a",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "schema":
+                            "o2o.funding-binding-ledger.v1",
+
+                        "binding_id":
+                            binding_id,
+
+                        "bundle_id":
+                            args.bundle_id,
+
+                        "proposal_id":
+                            args.proposal_id,
+
+                        "project_id":
+                            proposal.get(
+                                "project_id"
+                            ),
+
+                        "evidence_source":
+                            args.evidence_source,
+
+                        "confidence":
+                            args.confidence,
+
+                        "binding_is_authorization":
+                            False,
+
+                        "binding_is_execution":
+                            False,
+
+                        "authority_changed":
+                            False,
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+
+    print(f"BINDING_ID={binding_id}")
+    print(f"BINDING_RECORD={binding_path}")
+    print(f"BINDING_LEDGER={ledger_path}")
+
+    print(
+        "BOUND_PROPOSAL_ID="
+        + args.proposal_id
+    )
+
+    print(
+        "BOUND_PROJECT_ID="
+        + str(
+            proposal.get("project_id")
+        )
+    )
+
+    print(
+        "EVIDENCE_SOURCE="
+        + args.evidence_source
+    )
+
+    print(
+        "CONFIDENCE="
+        + args.confidence
+    )
+
+    print(
+        "BINDING_IS_AUTHORIZATION=FALSE"
+    )
+
+    print(
+        "BINDING_IS_SUBMISSION=FALSE"
+    )
+
+    print(
+        "BINDING_IS_EXECUTION=FALSE"
+    )
+
+    print(
+        "OBSERVATION_MUTATED=FALSE"
+    )
+
+    print(
+        "IDENTITY_RECORD_MUTATED=FALSE"
+    )
+
+    print(
+        "AUTHORITY_CHANGED=FALSE"
+    )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
