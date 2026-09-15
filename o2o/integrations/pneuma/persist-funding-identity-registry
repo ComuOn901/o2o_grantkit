@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        fail(f"input packet not found: {path}")
+
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON: {exc}")
+
+
+def write_json(path: Path, value) -> None:
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    path.write_text(
+        json.dumps(value, indent=2) + "\n"
+    )
+
+
+def assert_governance(packet: dict) -> None:
+    governance = packet.get(
+        "governance", {}
+    )
+
+    required_false = {
+        "project_identity_is_authorization":
+            governance.get(
+                "project_identity_is_authorization"
+            ),
+        "proposal_identity_is_authorization":
+            governance.get(
+                "proposal_identity_is_authorization"
+            ),
+        "funding_target_is_request":
+            governance.get(
+                "funding_target_is_request"
+            ),
+        "submission_authorized":
+            governance.get(
+                "submission_authorized"
+            ),
+        "authority_changed":
+            governance.get(
+                "authority_changed"
+            ),
+    }
+
+    violations = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if violations:
+        fail(
+            "governance boundary violation: "
+            + ",".join(violations)
+        )
+
+
+def validate_ids(packet: dict) -> None:
+    projects = {
+        item["project_id"]
+        for item in packet.get(
+            "projects", []
+        )
+    }
+
+    proposals = {
+        item["proposal_id"]
+        for item in packet.get(
+            "proposals", []
+        )
+    }
+
+    candidates = {
+        item["candidate_id"]
+        for item in packet.get(
+            "proposal_candidates", []
+        )
+    }
+
+    libraries = {
+        item["library_id"]
+        for item in packet.get(
+            "source_library", []
+        )
+    }
+
+    for proposal in packet.get(
+        "proposals", []
+    ):
+        if proposal["project_id"] not in projects:
+            fail(
+                "proposal references unknown project: "
+                + proposal["proposal_id"]
+            )
+
+    for candidate in packet.get(
+        "proposal_candidates", []
+    ):
+        if candidate["project_id"] not in projects:
+            fail(
+                "candidate references unknown project: "
+                + candidate["candidate_id"]
+            )
+
+    known = (
+        projects
+        | proposals
+        | candidates
+        | libraries
+    )
+
+    for relationship in packet.get(
+        "relationships", []
+    ):
+        obj = relationship.get("object")
+
+        if (
+            obj
+            and obj.startswith("O2O-")
+            and obj not in known
+        ):
+            fail(
+                "relationship references unknown object: "
+                + obj
+            )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Persist normalized O2O funding "
+            "identities into PNEUMA."
+        )
+    )
+
+    parser.add_argument(
+        "packet",
+    )
+
+    parser.add_argument(
+        "--registry-root",
+        required=True,
+    )
+
+    args = parser.parse_args()
+
+    packet_path = (
+        Path(args.packet)
+        .expanduser()
+        .resolve()
+    )
+
+    root = (
+        Path(args.registry_root)
+        .expanduser()
+        .resolve()
+    )
+
+    packet = load_json(packet_path)
+
+    if (
+        packet.get("schema")
+        != "o2o.funding-identity-normalization.v1"
+    ):
+        fail("unexpected normalization schema")
+
+    assert_governance(packet)
+    validate_ids(packet)
+
+    projects_dir = root / "projects"
+    proposals_dir = root / "proposals"
+    candidates_dir = root / "candidates"
+    library_dir = root / "source-library"
+
+    for item in packet.get(
+        "projects", []
+    ):
+        write_json(
+            projects_dir
+            / f"{item['project_id']}.json",
+            item,
+        )
+
+    for item in packet.get(
+        "proposals", []
+    ):
+        write_json(
+            proposals_dir
+            / f"{item['proposal_id']}.json",
+            item,
+        )
+
+    for item in packet.get(
+        "proposal_candidates", []
+    ):
+        write_json(
+            candidates_dir
+            / f"{item['candidate_id']}.json",
+            item,
+        )
+
+    for item in packet.get(
+        "source_library", []
+    ):
+        write_json(
+            library_dir
+            / f"{item['library_id']}.json",
+            item,
+        )
+
+    relationships_path = (
+        root / "relationships.jsonl"
+    )
+
+    with relationships_path.open(
+        "w",
+        encoding="utf-8",
+    ) as handle:
+        for relationship in packet.get(
+            "relationships", []
+        ):
+            handle.write(
+                json.dumps(
+                    relationship,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+
+    registry = {
+        "schema":
+            "o2o.pneuma-funding-identity-registry.v1",
+
+        "projects":
+            len(packet.get(
+                "projects", []
+            )),
+
+        "proposals":
+            len(packet.get(
+                "proposals", []
+            )),
+
+        "proposal_candidates":
+            len(packet.get(
+                "proposal_candidates", []
+            )),
+
+        "source_library_records":
+            len(packet.get(
+                "source_library", []
+            )),
+
+        "relationships":
+            len(packet.get(
+                "relationships", []
+            )),
+
+        "governance": {
+            "registry_is_authorization":
+                False,
+
+            "project_identity_is_authorization":
+                False,
+
+            "proposal_identity_is_authorization":
+                False,
+
+            "history_is_execution":
+                False,
+
+            "submission_authorized":
+                False,
+
+            "authority_changed":
+                False,
+        },
+    }
+
+    write_json(
+        root / "registry.json",
+        registry,
+    )
+
+    print(
+        "PROJECTS_PERSISTED="
+        + str(registry["projects"])
+    )
+
+    print(
+        "PROPOSALS_PERSISTED="
+        + str(registry["proposals"])
+    )
+
+    print(
+        "CANDIDATES_PERSISTED="
+        + str(
+            registry["proposal_candidates"]
+        )
+    )
+
+    print(
+        "SOURCE_LIBRARY_PERSISTED="
+        + str(
+            registry["source_library_records"]
+        )
+    )
+
+    print(
+        "RELATIONSHIPS_PERSISTED="
+        + str(
+            registry["relationships"]
+        )
+    )
+
+    print("REGISTRY_CREATED=TRUE")
+
+    print(
+        "REGISTRY_IS_AUTHORIZATION=FALSE"
+    )
+
+    print(
+        "PROJECT_IDENTITY_IS_AUTHORIZATION=FALSE"
+    )
+
+    print(
+        "PROPOSAL_IDENTITY_IS_AUTHORIZATION=FALSE"
+    )
+
+    print("HISTORY_IS_EXECUTION=FALSE")
+    print("SUBMISSION_AUTHORIZED=FALSE")
+    print("AUTHORITY_CHANGED=FALSE")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
