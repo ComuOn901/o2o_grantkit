@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        fail(f"unable to read {path}: {exc}")
+
+
+def load_ledger(path: Path) -> list[dict]:
+    if not path.exists():
+        fail(f"ledger not found: {path}")
+
+    rows = []
+
+    for number, line in enumerate(
+        path.read_text().splitlines(),
+        start=1,
+    ):
+        if not line.strip():
+            continue
+
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            fail(
+                f"invalid ledger JSON line "
+                f"{number}: {exc}"
+            )
+
+    return rows
+
+
+def assert_record_boundary(record: dict) -> None:
+    if record.get("authorization_occurred") is not False:
+        fail(
+            "ledger claims authorization occurred"
+        )
+
+    if record.get("execution_occurred") is not False:
+        fail(
+            "ledger claims execution occurred"
+        )
+
+    if record.get("authority_changed") is not False:
+        fail(
+            "ledger claims authority changed"
+        )
+
+
+def load_bundle(record: dict) -> dict:
+    path = Path(
+        record["bundle_path"]
+    ).expanduser().resolve()
+
+    manifest_path = path / "manifest.json"
+    queue_path = path / "queue.json"
+    view_path = path / "mender-view.json"
+
+    for required in [
+        manifest_path,
+        queue_path,
+        view_path,
+    ]:
+        if not required.exists():
+            fail(
+                f"bundle artifact missing: {required}"
+            )
+
+    manifest = load_json(manifest_path)
+    queue = load_json(queue_path)
+    view = load_json(view_path)
+
+    governance = manifest.get(
+        "governance", {}
+    )
+
+    required_false = {
+        "evidence_is_authorization":
+            governance.get(
+                "evidence_is_authorization"
+            ),
+        "queue_is_authorization":
+            governance.get(
+                "queue_is_authorization"
+            ),
+        "queue_is_execution":
+            governance.get(
+                "queue_is_execution"
+            ),
+        "mender_can_authorize":
+            governance.get(
+                "mender_can_authorize"
+            ),
+        "mender_can_submit":
+            governance.get(
+                "mender_can_submit"
+            ),
+        "mender_is_governor":
+            governance.get(
+                "mender_is_governor"
+            ),
+        "authority.changed":
+            manifest.get(
+                "authority", {}
+            ).get("changed"),
+    }
+
+    bad = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if bad:
+        fail(
+            "bundle truth boundary violation: "
+            + ",".join(bad)
+        )
+
+    return {
+        "record": record,
+        "manifest": manifest,
+        "queue": queue,
+        "view": view,
+    }
+
+
+def esc(value) -> str:
+    return html.escape(
+        str(value if value is not None else "")
+    )
+
+
+def build_html(items: list[dict]) -> str:
+    cards = []
+
+    for item in reversed(items):
+        record = item["record"]
+        view = item["view"]
+        queue = item["queue"]
+
+        proposal = view.get(
+            "proposal", {}
+        )
+
+        validation = view.get(
+            "validation", {}
+        )
+
+        queue_items = queue.get(
+            "items", []
+        )
+
+        queue_html = ""
+
+        if queue_items:
+            lis = []
+
+            for q in queue_items:
+                lis.append(
+                    "<li>"
+                    f"<strong>{esc(q.get('task'))}</strong>"
+                    " &mdash; "
+                    f"{esc(q.get('role'))}"
+                    " &mdash; "
+                    "authorization_required=false"
+                    "</li>"
+                )
+
+            queue_html = (
+                "<ul>"
+                + "".join(lis)
+                + "</ul>"
+            )
+        else:
+            queue_html = (
+                "<p>No coordination items.</p>"
+            )
+
+        card = f"""
+        <article class="card">
+          <div class="header-row">
+            <h2>{esc(view.get("classification"))}</h2>
+            <span class="badge">OBSERVATION ONLY</span>
+          </div>
+
+          <dl>
+            <dt>Bundle</dt>
+            <dd>{esc(record.get("bundle_id"))}</dd>
+
+            <dt>Created</dt>
+            <dd>{esc(record.get("created_at"))}</dd>
+
+            <dt>Title</dt>
+            <dd>{esc(proposal.get("title") or "Untitled")}</dd>
+
+            <dt>Funder</dt>
+            <dd>{esc(proposal.get("funder") or "Unspecified")}</dd>
+
+            <dt>Program</dt>
+            <dd>{esc(proposal.get("program") or "Unspecified")}</dd>
+
+            <dt>Completion</dt>
+            <dd>{esc(proposal.get("completion_percent"))}%</dd>
+
+            <dt>Errors</dt>
+            <dd>{esc(validation.get("errors"))}</dd>
+
+            <dt>Warnings</dt>
+            <dd>{esc(validation.get("warnings"))}</dd>
+          </dl>
+
+          <h3>MENDER coordination queue</h3>
+          {queue_html}
+
+          <div class="truth">
+            MENDER_CAN_AUTHORIZE=FALSE<br>
+            MENDER_CAN_SUBMIT=FALSE<br>
+            AUTHORIZATION_OCCURRED=FALSE<br>
+            EXECUTION_OCCURRED=FALSE<br>
+            AUTHORITY_CHANGED=FALSE
+          </div>
+        </article>
+        """
+
+        cards.append(card)
+
+    total = len(items)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<title>Paraclete / Commons Funding Observation</title>
+
+<style>
+body {{
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  background: #101214;
+  color: #eef2f3;
+}}
+
+main {{
+  max-width: 1100px;
+  margin: auto;
+  padding: 32px 20px 80px;
+}}
+
+header {{
+  margin-bottom: 28px;
+}}
+
+h1 {{
+  margin-bottom: 8px;
+}}
+
+.subtitle {{
+  opacity: .75;
+}}
+
+.notice {{
+  padding: 14px 16px;
+  border: 1px solid #48515a;
+  border-radius: 10px;
+  margin: 20px 0;
+  background: #171b1f;
+}}
+
+.grid {{
+  display: grid;
+  gap: 18px;
+}}
+
+.card {{
+  padding: 20px;
+  border: 1px solid #343a40;
+  border-radius: 14px;
+  background: #181c20;
+}}
+
+.header-row {{
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}}
+
+.badge {{
+  font-size: 12px;
+  padding: 6px 9px;
+  border: 1px solid #59626c;
+  border-radius: 999px;
+}}
+
+dl {{
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 8px 18px;
+}}
+
+dt {{
+  opacity: .65;
+}}
+
+dd {{
+  margin: 0;
+  overflow-wrap: anywhere;
+}}
+
+.truth {{
+  margin-top: 18px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #0e1113;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}}
+
+footer {{
+  opacity: .6;
+  margin-top: 28px;
+  font-size: 13px;
+}}
+</style>
+</head>
+
+<body>
+<main>
+
+<header>
+  <h1>Funding Observation</h1>
+
+  <div class="subtitle">
+    Paraclete / Commons observational surface
+  </div>
+</header>
+
+<div class="notice">
+  This surface displays persisted PNEUMA evidence.
+  It does not authorize, submit, execute, or mutate funding actions.
+</div>
+
+<p>
+  Evidence bundles observed: <strong>{total}</strong>
+</p>
+
+<section class="grid">
+{''.join(cards)}
+</section>
+
+<footer>
+  VERIFIED != AUTHORIZED != EXECUTED != OBSERVED != ACCEPTED
+  <br>
+  MENDER_COORDINATION != AUTHORIZATION
+  <br>
+  CONVERSATION != PERMIT
+</footer>
+
+</main>
+</body>
+</html>
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build a read-only Paraclete / Commons "
+            "funding observation surface."
+        )
+    )
+
+    parser.add_argument(
+        "--evidence-root",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--output",
+        required=True,
+    )
+
+    args = parser.parse_args()
+
+    root = (
+        Path(args.evidence_root)
+        .expanduser()
+        .resolve()
+    )
+
+    output = (
+        Path(args.output)
+        .expanduser()
+        .resolve()
+    )
+
+    ledger_path = root / "ledger.jsonl"
+
+    records = load_ledger(ledger_path)
+
+    if not records:
+        fail("no evidence records found")
+
+    items = []
+
+    for record in records:
+        assert_record_boundary(record)
+        items.append(load_bundle(record))
+
+    output.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    data = {
+        "schema":
+            "o2o.paraclete-funding-observation.v1",
+        "evidence_root": str(root),
+        "records": len(items),
+        "items": items,
+        "governance": {
+            "surface_is_observational": True,
+            "surface_can_authorize": False,
+            "surface_can_submit": False,
+            "surface_can_execute": False,
+            "surface_can_mutate_source": False,
+        },
+        "authority": {
+            "changed": False,
+        },
+    }
+
+    data_path = output / "funding-observation.json"
+
+    data_path.write_text(
+        json.dumps(data, indent=2) + "\n"
+    )
+
+    html_path = output / "index.html"
+
+    html_path.write_text(
+        build_html(items)
+    )
+
+    print(
+        f"EVIDENCE_RECORDS={len(items)}"
+    )
+    print(
+        f"OBSERVATION_JSON={data_path}"
+    )
+    print(
+        f"OBSERVATION_HTML={html_path}"
+    )
+
+    print("SURFACE_CREATED=TRUE")
+    print("SURFACE_IS_OBSERVATIONAL=TRUE")
+
+    print("SURFACE_CAN_AUTHORIZE=FALSE")
+    print("SURFACE_CAN_SUBMIT=FALSE")
+    print("SURFACE_CAN_EXECUTE=FALSE")
+    print("SURFACE_CAN_MUTATE_SOURCE=FALSE")
+
+    print("AUTHORITY_CHANGED=FALSE")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
