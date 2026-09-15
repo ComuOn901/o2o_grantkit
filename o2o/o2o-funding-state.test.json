@@ -1,0 +1,20 @@
+{
+  "schema": "o2o.funding-state.v1",
+  "proposal": {
+    "grantkit_status": "./status.json"
+  },
+  "validation": {
+    "grantkit_checked": false,
+    "errors": 0,
+    "warnings": 0
+  },
+  "governance": {
+    "proposal_approved": false,
+    "submission_authorized": false,
+    "submission_observed": false,
+    "award_observed": false
+  },
+  "authority": {
+    "changed": false
+  }
+}

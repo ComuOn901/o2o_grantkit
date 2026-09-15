@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://o2o.local/schemas/o2o-funding-state.schema.json",
+  "title": "O2O Funding State",
+  "type": "object",
+  "required": [
+    "schema",
+    "proposal",
+    "validation",
+    "governance",
+    "authority"
+  ],
+  "properties": {
+    "schema": {
+      "const": "o2o.funding-state.v1"
+    },
+    "proposal": {
+      "type": "object",
+      "required": ["grantkit_status"],
+      "properties": {
+        "grantkit_status": {
+          "type": "string"
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["grantkit_checked"],
+      "properties": {
+        "grantkit_checked": {
+          "type": "boolean"
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "required": [
+        "proposal_approved",
+        "submission_authorized",
+        "submission_observed",
+        "award_observed"
+      ],
+      "properties": {
+        "proposal_approved": {
+          "type": "boolean"
+        },
+        "submission_authorized": {
+          "type": "boolean"
+        },
+        "submission_observed": {
+          "type": "boolean"
+        },
+        "award_observed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": ["changed"],
+      "properties": {
+        "changed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}
