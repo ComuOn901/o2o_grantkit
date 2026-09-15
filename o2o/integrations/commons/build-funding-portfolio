@@ -1,0 +1,872 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+
+def fail(message: str, code: int = 1) -> None:
+    print(f"ERROR={message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_json(path: Path) -> dict:
+    if not path.exists():
+        fail(f"required artifact missing: {path}")
+
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(f"invalid JSON in {path}: {exc}")
+
+
+def load_ledger(path: Path) -> list[dict]:
+    if not path.exists():
+        fail(f"ledger not found: {path}")
+
+    records = []
+
+    for number, line in enumerate(
+        path.read_text().splitlines(),
+        start=1,
+    ):
+        if not line.strip():
+            continue
+
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            fail(
+                f"invalid ledger JSON line {number}: {exc}"
+            )
+
+    if not records:
+        fail("ledger contains no evidence records")
+
+    return records
+
+
+def assert_ledger_boundary(record: dict) -> None:
+    required_false = {
+        "authorization_occurred":
+            record.get("authorization_occurred"),
+        "execution_occurred":
+            record.get("execution_occurred"),
+        "authority_changed":
+            record.get("authority_changed"),
+    }
+
+    violations = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if violations:
+        fail(
+            "ledger truth boundary violation: "
+            + ",".join(violations)
+        )
+
+
+def assert_bundle_boundary(
+    manifest: dict,
+    queue: dict,
+    view: dict,
+) -> None:
+
+    mg = manifest.get("governance", {})
+    qg = queue.get("governance", {})
+    vg = view.get("governance", {})
+
+    required_false = {
+        "manifest.evidence_is_authorization":
+            mg.get("evidence_is_authorization"),
+
+        "manifest.queue_is_authorization":
+            mg.get("queue_is_authorization"),
+
+        "manifest.queue_is_execution":
+            mg.get("queue_is_execution"),
+
+        "manifest.mender_can_authorize":
+            mg.get("mender_can_authorize"),
+
+        "manifest.mender_can_submit":
+            mg.get("mender_can_submit"),
+
+        "manifest.mender_is_governor":
+            mg.get("mender_is_governor"),
+
+        "manifest.authority.changed":
+            manifest.get(
+                "authority", {}
+            ).get("changed"),
+
+        "queue.queue_is_authorization":
+            qg.get("queue_is_authorization"),
+
+        "queue.queue_is_execution":
+            qg.get("queue_is_execution"),
+
+        "queue.mender_can_authorize":
+            qg.get("mender_can_authorize"),
+
+        "queue.mender_can_submit":
+            qg.get("mender_can_submit"),
+
+        "queue.authority.changed":
+            queue.get(
+                "authority", {}
+            ).get("changed"),
+
+        "view.mender_can_authorize":
+            vg.get("mender_can_authorize"),
+
+        "view.mender_can_submit":
+            vg.get("mender_can_submit"),
+
+        "view.mender_is_governor":
+            vg.get("mender_is_governor"),
+
+        "view.authority.changed":
+            view.get(
+                "authority", {}
+            ).get("changed"),
+    }
+
+    violations = [
+        key
+        for key, value in required_false.items()
+        if value is not False
+    ]
+
+    if violations:
+        fail(
+            "bundle truth boundary violation: "
+            + ",".join(violations)
+        )
+
+
+def esc(value) -> str:
+    return html.escape(
+        str(value if value is not None else "")
+    )
+
+
+def parse_deadline(value: str):
+    if not value:
+        return None
+
+    candidates = [
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+    ]
+
+    for fmt in candidates:
+        try:
+            return datetime.strptime(
+                value,
+                fmt,
+            ).replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            pass
+
+    return None
+
+
+def deadline_state(value: str) -> str:
+    deadline = parse_deadline(value)
+
+    if deadline is None:
+        return "UNSPECIFIED"
+
+    now = datetime.now(timezone.utc)
+
+    if deadline < now:
+        return "PAST"
+
+    days = (deadline - now).days
+
+    if days <= 7:
+        return "WITHIN_7_DAYS"
+
+    if days <= 30:
+        return "WITHIN_30_DAYS"
+
+    return "FUTURE"
+
+
+def load_observation(record: dict) -> dict:
+    assert_ledger_boundary(record)
+
+    bundle = Path(
+        record["bundle_path"]
+    ).expanduser().resolve()
+
+    manifest = load_json(
+        bundle / "manifest.json"
+    )
+
+    queue = load_json(
+        bundle / "queue.json"
+    )
+
+    view = load_json(
+        bundle / "mender-view.json"
+    )
+
+    assert_bundle_boundary(
+        manifest,
+        queue,
+        view,
+    )
+
+    proposal = view.get("proposal", {})
+    validation = view.get("validation", {})
+
+    queue_items = queue.get(
+        "items", []
+    )
+
+    return {
+        "bundle_id":
+            record.get("bundle_id"),
+
+        "created_at":
+            record.get("created_at"),
+
+        "source_state":
+            view.get("source_state"),
+
+        "classification":
+            view.get("classification"),
+
+        "proposal": {
+            "title":
+                proposal.get("title", ""),
+
+            "funder":
+                proposal.get("funder", ""),
+
+            "program":
+                proposal.get("program", ""),
+
+            "deadline":
+                proposal.get("deadline", ""),
+
+            "deadline_state":
+                deadline_state(
+                    proposal.get("deadline", "")
+                ),
+
+            "completion_percent":
+                proposal.get(
+                    "completion_percent", 0
+                ),
+        },
+
+        "validation": {
+            "grantkit_checked":
+                validation.get(
+                    "grantkit_checked", False
+                ),
+
+            "errors":
+                validation.get("errors", 0),
+
+            "warnings":
+                validation.get("warnings", 0),
+        },
+
+        "queue": queue_items,
+
+        "queue_items": len(queue_items),
+
+        "truth": {
+            "record_is_unique_grant":
+                False,
+
+            "portfolio_priority_is_authorization":
+                False,
+
+            "authorization_occurred":
+                False,
+
+            "execution_occurred":
+                False,
+
+            "authority_changed":
+                False,
+        },
+    }
+
+
+def build_summary(
+    observations: list[dict],
+) -> dict:
+
+    classifications = Counter(
+        item.get(
+            "classification",
+            "UNKNOWN",
+        )
+        for item in observations
+    )
+
+    deadline_states = Counter(
+        item["proposal"].get(
+            "deadline_state",
+            "UNSPECIFIED",
+        )
+        for item in observations
+    )
+
+    total_errors = sum(
+        int(
+            item["validation"].get(
+                "errors", 0
+            )
+        )
+        for item in observations
+    )
+
+    total_warnings = sum(
+        int(
+            item["validation"].get(
+                "warnings", 0
+            )
+        )
+        for item in observations
+    )
+
+    total_queue_items = sum(
+        int(item.get("queue_items", 0))
+        for item in observations
+    )
+
+    completion_values = [
+        float(
+            item["proposal"].get(
+                "completion_percent", 0
+            )
+        )
+        for item in observations
+    ]
+
+    average_completion = (
+        sum(completion_values)
+        / len(completion_values)
+        if completion_values
+        else 0
+    )
+
+    return {
+        "observation_records":
+            len(observations),
+
+        "unique_grants_claimed":
+            False,
+
+        "classifications":
+            dict(classifications),
+
+        "deadline_states":
+            dict(deadline_states),
+
+        "validation_errors":
+            total_errors,
+
+        "validation_warnings":
+            total_warnings,
+
+        "queue_items":
+            total_queue_items,
+
+        "average_completion_percent":
+            round(
+                average_completion,
+                2,
+            ),
+    }
+
+
+def build_html(
+    observations: list[dict],
+    summary: dict,
+) -> str:
+
+    cards = []
+
+    for item in reversed(observations):
+        p = item["proposal"]
+        v = item["validation"]
+
+        queue_lines = []
+
+        for q in item["queue"]:
+            queue_lines.append(
+                "<li>"
+                f"<strong>{esc(q.get('task'))}</strong>"
+                " — "
+                f"{esc(q.get('role'))}"
+                " — authorization_required=false"
+                "</li>"
+            )
+
+        queue_html = (
+            "<ul>"
+            + "".join(queue_lines)
+            + "</ul>"
+            if queue_lines
+            else "<p>No coordination items.</p>"
+        )
+
+        cards.append(
+            f"""
+<article class="card">
+  <div class="row">
+    <h2>{esc(item["classification"])}</h2>
+    <span class="badge">OBSERVATION RECORD</span>
+  </div>
+
+  <dl>
+    <dt>Title</dt>
+    <dd>{esc(p.get("title") or "Untitled")}</dd>
+
+    <dt>Funder</dt>
+    <dd>{esc(p.get("funder") or "Unspecified")}</dd>
+
+    <dt>Program</dt>
+    <dd>{esc(p.get("program") or "Unspecified")}</dd>
+
+    <dt>Deadline</dt>
+    <dd>{esc(p.get("deadline") or "Unspecified")}</dd>
+
+    <dt>Deadline state</dt>
+    <dd>{esc(p.get("deadline_state"))}</dd>
+
+    <dt>Completion</dt>
+    <dd>{esc(p.get("completion_percent"))}%</dd>
+
+    <dt>Errors</dt>
+    <dd>{esc(v.get("errors"))}</dd>
+
+    <dt>Warnings</dt>
+    <dd>{esc(v.get("warnings"))}</dd>
+
+    <dt>Bundle</dt>
+    <dd>{esc(item.get("bundle_id"))}</dd>
+  </dl>
+
+  <h3>MENDER coordination queue</h3>
+  {queue_html}
+
+  <div class="truth">
+    RECORD_IS_UNIQUE_GRANT=FALSE<br>
+    PORTFOLIO_PRIORITY_IS_AUTHORIZATION=FALSE<br>
+    AUTHORIZATION_OCCURRED=FALSE<br>
+    EXECUTION_OCCURRED=FALSE<br>
+    AUTHORITY_CHANGED=FALSE
+  </div>
+</article>
+"""
+        )
+
+    classifications = "".join(
+        f"<li>{esc(k)}: {esc(v)}</li>"
+        for k, v in sorted(
+            summary["classifications"].items()
+        )
+    )
+
+    deadline_states = "".join(
+        f"<li>{esc(k)}: {esc(v)}</li>"
+        for k, v in sorted(
+            summary["deadline_states"].items()
+        )
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<title>Commons Funding Portfolio</title>
+
+<style>
+body {{
+  margin: 0;
+  background: #101214;
+  color: #eef2f3;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}}
+
+main {{
+  max-width: 1150px;
+  margin: auto;
+  padding: 32px 20px 80px;
+}}
+
+.notice,
+.summary,
+.card {{
+  border: 1px solid #343a40;
+  border-radius: 14px;
+  background: #181c20;
+}}
+
+.notice {{
+  padding: 16px;
+  margin: 20px 0;
+}}
+
+.summary {{
+  padding: 20px;
+  margin-bottom: 22px;
+}}
+
+.metrics {{
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}}
+
+.metric {{
+  padding: 14px;
+  border-radius: 10px;
+  background: #0e1113;
+}}
+
+.metric strong {{
+  display: block;
+  font-size: 24px;
+}}
+
+.grid {{
+  display: grid;
+  gap: 18px;
+}}
+
+.card {{
+  padding: 20px;
+}}
+
+.row {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}}
+
+.badge {{
+  border: 1px solid #59626c;
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 12px;
+}}
+
+dl {{
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px 18px;
+}}
+
+dt {{
+  opacity: .65;
+}}
+
+dd {{
+  margin: 0;
+  overflow-wrap: anywhere;
+}}
+
+.truth {{
+  margin-top: 18px;
+  background: #0e1113;
+  border-radius: 9px;
+  padding: 12px;
+  font-family: ui-monospace, monospace;
+  line-height: 1.7;
+  font-size: 13px;
+}}
+
+footer {{
+  margin-top: 30px;
+  opacity: .65;
+}}
+</style>
+</head>
+
+<body>
+<main>
+
+<h1>Commons Funding Portfolio</h1>
+
+<p>
+  Read-only aggregation of PNEUMA funding evidence.
+</p>
+
+<div class="notice">
+  Records shown here are evidence observations.
+  Multiple records may describe the same proposal.
+  Portfolio visibility does not establish approval,
+  authorization, submission, execution, or award.
+</div>
+
+<section class="summary">
+
+<h2>Portfolio observation summary</h2>
+
+<div class="metrics">
+
+  <div class="metric">
+    <strong>{summary["observation_records"]}</strong>
+    observation records
+  </div>
+
+  <div class="metric">
+    <strong>{summary["average_completion_percent"]}%</strong>
+    average observed completion
+  </div>
+
+  <div class="metric">
+    <strong>{summary["validation_errors"]}</strong>
+    validation errors
+  </div>
+
+  <div class="metric">
+    <strong>{summary["validation_warnings"]}</strong>
+    validation warnings
+  </div>
+
+  <div class="metric">
+    <strong>{summary["queue_items"]}</strong>
+    coordination queue items
+  </div>
+
+</div>
+
+<h3>Classifications</h3>
+<ul>{classifications}</ul>
+
+<h3>Deadline states</h3>
+<ul>{deadline_states}</ul>
+
+</section>
+
+<section class="grid">
+{''.join(cards)}
+</section>
+
+<footer>
+PORTFOLIO_RECORD != UNIQUE_GRANT<br>
+PORTFOLIO_VISIBILITY != APPROVAL<br>
+PORTFOLIO_PRIORITY != AUTHORIZATION<br>
+QUEUED != EXECUTED<br>
+MENDER != GOVERNOR<br>
+AUTHORITY_CHANGED=FALSE
+</footer>
+
+</main>
+</body>
+</html>
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build a read-only Commons funding "
+            "portfolio from PNEUMA evidence."
+        )
+    )
+
+    parser.add_argument(
+        "--evidence-root",
+        required=True,
+    )
+
+    parser.add_argument(
+        "--output",
+        required=True,
+    )
+
+    args = parser.parse_args()
+
+    evidence_root = (
+        Path(args.evidence_root)
+        .expanduser()
+        .resolve()
+    )
+
+    output = (
+        Path(args.output)
+        .expanduser()
+        .resolve()
+    )
+
+    ledger = load_ledger(
+        evidence_root / "ledger.jsonl"
+    )
+
+    observations = [
+        load_observation(record)
+        for record in ledger
+    ]
+
+    summary = build_summary(
+        observations
+    )
+
+    output.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    portfolio = {
+        "schema":
+            "o2o.commons-funding-portfolio.v1",
+
+        "evidence_root":
+            str(evidence_root),
+
+        "summary":
+            summary,
+
+        "observations":
+            observations,
+
+        "governance": {
+            "read_only":
+                True,
+
+            "records_are_unique_grants":
+                False,
+
+            "portfolio_can_authorize":
+                False,
+
+            "portfolio_can_submit":
+                False,
+
+            "portfolio_can_execute":
+                False,
+
+            "portfolio_can_mutate_source":
+                False,
+
+            "portfolio_priority_is_authorization":
+                False,
+        },
+
+        "authority": {
+            "changed": False,
+        },
+    }
+
+    json_path = (
+        output / "funding-portfolio.json"
+    )
+
+    html_path = (
+        output / "index.html"
+    )
+
+    json_path.write_text(
+        json.dumps(
+            portfolio,
+            indent=2,
+        )
+        + "\n"
+    )
+
+    html_path.write_text(
+        build_html(
+            observations,
+            summary,
+        )
+    )
+
+    print(
+        "PORTFOLIO_OBSERVATIONS="
+        + str(
+            summary["observation_records"]
+        )
+    )
+
+    print(
+        "VALIDATION_ERRORS="
+        + str(
+            summary["validation_errors"]
+        )
+    )
+
+    print(
+        "VALIDATION_WARNINGS="
+        + str(
+            summary["validation_warnings"]
+        )
+    )
+
+    print(
+        "QUEUE_ITEMS="
+        + str(
+            summary["queue_items"]
+        )
+    )
+
+    print(f"PORTFOLIO_JSON={json_path}")
+    print(f"PORTFOLIO_HTML={html_path}")
+
+    print("PORTFOLIO_CREATED=TRUE")
+    print("PORTFOLIO_READ_ONLY=TRUE")
+
+    print(
+        "RECORDS_ARE_UNIQUE_GRANTS=FALSE"
+    )
+
+    print(
+        "PORTFOLIO_CAN_AUTHORIZE=FALSE"
+    )
+
+    print(
+        "PORTFOLIO_CAN_SUBMIT=FALSE"
+    )
+
+    print(
+        "PORTFOLIO_CAN_EXECUTE=FALSE"
+    )
+
+    print(
+        "PORTFOLIO_CAN_MUTATE_SOURCE=FALSE"
+    )
+
+    print(
+        "PORTFOLIO_PRIORITY_IS_AUTHORIZATION=FALSE"
+    )
+
+    print("AUTHORITY_CHANGED=FALSE")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
